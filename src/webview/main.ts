@@ -422,8 +422,10 @@ function renderManage(collection: Collection): void {
     els.manage.replaceChildren();
     return;
   }
-  // 使用者正在管理區裡打字時不重畫，免得輸入框被換掉。
-  if (els.manage.contains(document.activeElement)) {
+  // 使用者正在管理區的輸入框裡打字時不重畫，免得輸入框被換掉。
+  // 只認文字輸入框：Chromium 點按鈕也會給它焦點，若連按鈕、下拉都算，按「新增」「刪除」後畫面就不會刷新。
+  const active = document.activeElement;
+  if (active instanceof HTMLInputElement && els.manage.contains(active)) {
     return;
   }
   els.manage.replaceChildren(...categoryRows(collection), ...tagRows(collection));
