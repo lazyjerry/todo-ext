@@ -431,9 +431,14 @@ function renderManage(collection: Collection): void {
   els.manage.replaceChildren(...categoryRows(collection), ...tagRows(collection));
 }
 
+/** 輸入法組字中按 Enter 是在選字，不是送出；Chromium 這時也會發 key=Enter 的 keydown。 */
+function isSubmitEnter(event: KeyboardEvent): boolean {
+  return event.key === 'Enter' && !event.isComposing && event.keyCode !== 229;
+}
+
 function submitOnEnter(input: HTMLInputElement, submit: () => void): void {
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
+    if (isSubmitEnter(event)) {
       event.preventDefault();
       submit();
     }
@@ -776,7 +781,7 @@ els.itemTitle.addEventListener('blur', () => {
   }
 });
 els.itemTitle.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
+  if (isSubmitEnter(event)) {
     event.preventDefault();
     els.itemContent.focus();
   }
