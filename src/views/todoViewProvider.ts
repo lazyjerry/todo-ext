@@ -31,61 +31,58 @@ const SELECTED_KEY = 'todooo.selectedCollection';
 const RATIO_KEY = 'todooo.ratio';
 const DATA_FOLDER_SETTING = 'todooo.dataFolder';
 
-/** 面板是單例：再執行一次指令只是把既有分頁帶到前面。 */
-export class TodoPanel {
+/**
+ * 底部 Panel 裡的 view。收起再打開時 webview 保留（retainContextWhenHidden），
+ * 資料狀態一律留在 provider 上，view 被 VS Code 回收重建也照樣接得回來。
+ */
+export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'todooo.panel';
-  private static current: TodoPanel | undefined;
 
-  static show(context: vscode.ExtensionContext): void {
-    if (TodoPanel.current) {
-      TodoPanel.current.panel.reveal();
-      return;
-    }
-    const panel = vscode.window.createWebviewPanel(TodoPanel.viewType, 'todooo', vscode.ViewColumn.Active, {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
-    });
-    TodoPanel.current = new TodoPanel(panel, context);
-  }
-
+  private view: vscode.WebviewView | undefined;
   private store: CollectionStore;
   private collections: Collection[] = [];
   private readonly disposables: vscode.Disposable[] = [];
   /** 序列化所有會改資料的操作，避免兩則訊息交錯寫同一份檔案。 */
   private queue: Promise<void> = Promise.resolve();
 
-  private constructor(
-    private readonly panel: vscode.WebviewPanel,
-    private readonly context: vscode.ExtensionContext,
-  ) {
+  constructor(private readonly context: vscode.ExtensionContext) {
     this.store = new CollectionStore(collectionsDir());
-    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'icon.svg');
-    panel.webview.html = this.getHtml(panel.webview);
     this.disposables.push(
-      panel.webview.onDidReceiveMessage((message: unknown) => {
-        if (isClientMessage(message)) {
-          this.enqueue(() => this.handle(message));
-        }
-      }),
-      // 分頁切回來時重讀磁碟：別的視窗可能改過。
-      panel.onDidChangeViewState((event) => {
-        if (event.webviewPanel.visible) {
-          this.enqueue(() => this.reload());
-        }
-      }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(DATA_FOLDER_SETTING)) {
           this.store = new CollectionStore(collectionsDir());
           this.enqueue(() => this.reload());
         }
       }),
-      panel.onDidDispose(() => this.dispose()),
     );
   }
 
-  private dispose(): void {
-    TodoPanel.current = undefined;
+  resolveWebviewView(webviewView: vscode.WebviewView): void {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
+    };
+    webviewView.webview.html = this.getHtml(webviewView.webview);
+    webviewView.webview.onDidReceiveMessage((message: unknown) => {
+      if (isClientMessage(message)) {
+        this.enqueue(() => this.handle(message));
+      }
+    });
+    // 面板收起再打開時重讀磁碟：別的視窗可能改過。
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.enqueue(() => this.reload());
+      }
+    });
+    webviewView.onDidDispose(() => {
+      if (this.view === webviewView) {
+        this.view = undefined;
+      }
+    });
+  }
+
+  dispose(): void {
     for (const item of this.disposables) {
       item.dispose();
     }
@@ -145,7 +142,7 @@ export class TodoPanel {
   }
 
   private post(message: HostMessage): void {
-    void this.panel.webview.postMessage(message);
+    void this.view?.webview.postMessage(message);
   }
 
   /** 把改好的 Collection 寫回磁碟並更新記憶體中的那份，再把整個狀態送給 webview。 */

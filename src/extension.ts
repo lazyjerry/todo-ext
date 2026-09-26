@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-import { TodoPanel } from './views/todoPanel';
+import { TodoViewProvider } from './views/todoViewProvider';
 
 export function activate(context: vscode.ExtensionContext): void {
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -9,9 +9,14 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar.command = 'todooo.open';
   statusBar.show();
 
+  const provider = new TodoViewProvider(context);
   context.subscriptions.push(
     statusBar,
-    vscode.commands.registerCommand('todooo.open', () => TodoPanel.show(context)),
+    provider,
+    vscode.window.registerWebviewViewProvider(TodoViewProvider.viewType, provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.commands.registerCommand('todooo.open', () => vscode.commands.executeCommand(`${TodoViewProvider.viewType}.focus`)),
   );
 }
 

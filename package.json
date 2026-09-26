@@ -40,6 +40,26 @@
     }
   },
   "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "todooo",
+          "title": "todooo",
+          "icon": "resources/panel.svg"
+        }
+      ]
+    },
+    "views": {
+      "todooo": [
+        {
+          "type": "webview",
+          "id": "todooo.panel",
+          "name": "todooo",
+          "icon": "resources/panel.svg",
+          "contextualTitle": "todooo"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "todooo.open",
