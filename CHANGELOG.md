@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
 ### Changed
 
 - 面板改放在**底部 Panel**（與終端機同一列的 **todooo** 分頁），不再開編輯區分頁。狀態列 **TODO** 按鈕與指令 `todooo: Open TODO List` 改為聚焦該分頁。
