@@ -4,15 +4,17 @@ import * as path from 'node:path';
 
 import * as vscode from 'vscode';
 
-import { createId } from '../core/ids';
+import { createId, isSafeIdSegment } from '../core/ids';
 import type { Collection } from '../core/model';
 import {
   addCategory,
   addTag,
   applyItemPatch,
+  childrenOf,
   createCollection,
   createItem,
   DEFAULT_COLLECTION_NAME,
+  moveItem,
   NAME_MAX,
   removeCategory,
   removeItem,
@@ -23,6 +25,7 @@ import {
   updateTag,
   withItem,
 } from '../core/model';
+import type { CollectionFolders } from '../core/store';
 import { CollectionStore } from '../core/store';
 import type { ClientMessage, HostMessage } from '../shared/protocol';
 import { clampRatio, isClientMessage } from '../shared/protocol';
@@ -30,6 +33,7 @@ import { clampRatio, isClientMessage } from '../shared/protocol';
 const SELECTED_KEY = 'todooo.selectedCollection';
 const RATIO_KEY = 'todooo.ratio';
 const DATA_FOLDER_SETTING = 'todooo.dataFolder';
+const FOLDERS_SETTING = 'todooo.collectionFolders';
 
 /**
  * 底部 Panel 裡的 view。收起再打開時 webview 保留（retainContextWhenHidden），
@@ -46,11 +50,11 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.store = new CollectionStore(collectionsDir());
+    this.store = new CollectionStore(collectionsDir(), collectionFolders());
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration(DATA_FOLDER_SETTING)) {
-          this.store = new CollectionStore(collectionsDir());
+        if (event.affectsConfiguration(DATA_FOLDER_SETTING) || event.affectsConfiguration(FOLDERS_SETTING)) {
+          this.store = new CollectionStore(collectionsDir(), collectionFolders());
           this.enqueue(() => this.reload());
         }
       }),
@@ -137,6 +141,8 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       collections: this.collections.map(({ id, name }) => ({ id, name })),
       collection,
       ratio: this.ratio,
+      folder: collapseHome(this.store.folderFor(collection.id)),
+      customFolder: this.store.hasCustomFolder(collection.id),
       focusItemId,
     });
   }
@@ -225,11 +231,18 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         await this.select(this.collections[0].id);
         return;
       }
+      case 'setCollectionFolder': {
+        const target = this.collections.find((entry) => entry.id === message.id);
+        if (target) {
+          await this.relocate(target);
+        }
+        return;
+      }
       case 'setTitle':
         await this.commit(setCollectionTitle(collection, message.title, now));
         return;
       case 'createItem': {
-        const item = createItem(createId('todo'), collection, now);
+        const item = createItem(createId('todo'), collection, now, message.parentId ?? null);
         await this.commit(withItem(collection, item, now), item.id);
         return;
       }
@@ -240,12 +253,25 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         }
         return;
       }
+      case 'moveItem': {
+        if (!collection.items.some((entry) => entry.id === message.id)) {
+          this.postState();
+          return;
+        }
+        await this.commitOrWarn(
+          moveItem(collection, message.id, message.parentId, message.index, now),
+          '帶著子項目的 TODO 只能留在頂層，子項目底下也不能再放子項目。',
+        );
+        return;
+      }
       case 'deleteItem': {
         const item = collection.items.find((entry) => entry.id === message.id);
         if (!item) {
           return;
         }
-        if (await confirm(`刪除 TODO「${item.title || '（無標題）'}」？此動作無法復原。`)) {
+        const children = childrenOf(collection, item.id).length;
+        const hint = children > 0 ? `與底下 ${children} 個子項目` : '';
+        if (await confirm(`刪除 TODO「${item.title || '（無標題）'}」${hint}？此動作無法復原。`)) {
           await this.commit(removeItem(collection, item.id, now));
         }
         return;
@@ -309,6 +335,51 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
+  /**
+   * 讓使用者挑資料夾，把這個 Collection 的檔案搬過去，再把對照表寫進使用者設定。
+   * 設定層級固定是 Global：保存位置跟著使用者走，開哪個工作區都一樣。
+   */
+  private async relocate(target: Collection): Promise<void> {
+    const current = this.store.folderFor(target.id);
+    const defaultDir = collectionsDir();
+    type Choice = vscode.QuickPickItem & { action: 'choose' | 'reset' };
+    const choices: Choice[] = [
+      { label: '$(folder-opened) 選擇資料夾…', description: '把這個 Collection 的 JSON 搬到指定的資料夾', action: 'choose' },
+    ];
+    if (this.store.hasCustomFolder(target.id)) {
+      choices.push({ label: '$(home) 改回預設資料夾', description: collapseHome(defaultDir), action: 'reset' });
+    }
+    const picked = await vscode.window.showQuickPick(choices, {
+      title: `「${target.name}」的保存位置`,
+      placeHolder: `目前保存在 ${collapseHome(current)}`,
+    });
+    if (!picked) {
+      return;
+    }
+    let folder: string | undefined;
+    if (picked.action === 'choose') {
+      const uris = await vscode.window.showOpenDialog({
+        title: `「${target.name}」要保存到哪個資料夾`,
+        openLabel: '保存到這個資料夾',
+        defaultUri: vscode.Uri.file(current),
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+      });
+      if (!uris || uris.length === 0) {
+        return;
+      }
+      folder = uris[0].fsPath;
+      if (path.resolve(folder) === path.resolve(defaultDir)) {
+        folder = undefined;
+      }
+    }
+    const folders = await this.store.relocate(target, folder);
+    this.store = new CollectionStore(defaultDir, folders);
+    await vscode.workspace.getConfiguration().update(FOLDERS_SETTING, storedFolders(folders), vscode.ConfigurationTarget.Global);
+    this.postState();
+  }
+
   private getHtml(webview: vscode.Webview): string {
     const mediaUri = vscode.Uri.joinPath(this.context.extensionUri, 'media');
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'main.js'));
@@ -339,6 +410,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       <button type="button" id="col-add" title="新增 Collection">＋</button>
       <button type="button" id="col-rename" title="重新命名 Collection">✎</button>
       <button type="button" id="col-delete" title="刪除 Collection">🗑</button>
+      <button type="button" id="col-folder" title="設定保存位置">📁</button>
     </div>
     <input id="title" type="text" maxlength="120" placeholder="大標題" title="大標題，預設為建立當天的日期">
   </header>
@@ -355,7 +427,11 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       <p id="placeholder" class="placeholder">點擊左側的 TODO 項目，這裡會顯示細節。</p>
       <div id="detail" hidden>
         <div class="detail-bar">
-          <button type="button" id="expand" title="展開細節，隱藏左側列表">展開</button>
+          <div class="detail-actions">
+            <button type="button" id="expand" title="展開細節，隱藏左側列表">展開</button>
+            <button type="button" id="child-add" title="在這個 TODO 底下新增子項目">＋ 子項目</button>
+            <span id="parent-title" class="muted" hidden></span>
+          </div>
           <button type="button" id="item-delete" class="danger" title="刪除這個 TODO">刪除</button>
         </div>
         <label class="field">
@@ -372,9 +448,12 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             <select id="item-category"></select>
           </label>
         </div>
-        <div class="field">
+        <div class="field" id="tags-field" hidden>
           <span class="label">標籤 <button type="button" id="manage-tags" class="link">管理</button></span>
-          <div id="item-tags" class="chips"></div>
+          <button type="button" id="tags-toggle" class="multiselect-toggle" aria-haspopup="listbox" aria-expanded="false" title="選擇標籤（可多選）">
+            <span id="tags-value" class="multiselect-value"></span>
+            <span class="multiselect-arrow" aria-hidden="true">▾</span>
+          </button>
         </div>
         <div id="manage" hidden></div>
         <div class="row">
@@ -394,6 +473,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       </div>
     </section>
   </main>
+  <div id="tags-menu" class="multiselect-menu" role="listbox" aria-label="標籤" hidden></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -414,6 +494,37 @@ function expandHome(value: string): string {
     return path.join(os.homedir(), value.slice(2));
   }
   return value;
+}
+
+/** 顯示與寫進設定時把家目錄縮成 `~`，換機器時設定檔比較好搬。 */
+function collapseHome(value: string): string {
+  const home = os.homedir();
+  if (value === home) {
+    return '~';
+  }
+  return value.startsWith(`${home}${path.sep}`) ? `~/${value.slice(home.length + 1)}` : value;
+}
+
+/** 讀設定裡個別 Collection 的保存資料夾；鍵不是合法 id、值不是字串的都略過。 */
+function collectionFolders(): CollectionFolders {
+  const raw = vscode.workspace.getConfiguration().get<unknown>(FOLDERS_SETTING);
+  const folders: Record<string, string> = {};
+  if (raw && typeof raw === 'object') {
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (isSafeIdSegment(id) && typeof value === 'string' && value.trim()) {
+        folders[id] = expandHome(value.trim());
+      }
+    }
+  }
+  return folders;
+}
+
+function storedFolders(folders: CollectionFolders): Record<string, string> {
+  const stored: Record<string, string> = {};
+  for (const [id, folder] of Object.entries(folders)) {
+    stored[id] = collapseHome(folder);
+  }
+  return stored;
 }
 
 async function askName(prompt: string, value?: string): Promise<string | undefined> {

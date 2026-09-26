@@ -33,9 +33,28 @@ suite('isClientMessage', () => {
       { type: 'updateTag', id: 'x' },
       { type: 'updateTag', id: 'x', color: 'blue' },
       { type: 'setRatio', ratio: 0.5 },
+      { type: 'createItem', parentId: 'p' },
+      { type: 'moveItem', id: 'x', parentId: null, index: 0 },
+      { type: 'moveItem', id: 'x', parentId: 'p', index: 3 },
+      { type: 'setCollectionFolder', id: 'c' },
     ];
     for (const message of ok) {
       assert.equal(isClientMessage(message), true, JSON.stringify(message));
+    }
+  });
+
+  test('moveItem 的 index 必須是非負整數、parentId 只能是字串或 null', () => {
+    const bad: unknown[] = [
+      { type: 'moveItem', id: 'x', parentId: null, index: -1 },
+      { type: 'moveItem', id: 'x', parentId: null, index: 1.5 },
+      { type: 'moveItem', id: 'x', parentId: null, index: '0' },
+      { type: 'moveItem', id: 'x', parentId: undefined, index: 0 },
+      { type: 'moveItem', id: 'x', parentId: 7, index: 0 },
+      { type: 'createItem', parentId: 7 },
+      { type: 'setCollectionFolder' },
+    ];
+    for (const message of bad) {
+      assert.equal(isClientMessage(message), false, JSON.stringify(message));
     }
   });
 

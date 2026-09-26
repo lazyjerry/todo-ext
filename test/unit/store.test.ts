@@ -58,6 +58,57 @@ suite('CollectionStore', () => {
     assert.equal(collections[0].id, 'col_0000000000000009');
   });
 
+  test('另設保存位置的 Collection 讀設定指向的那份，預設資料夾裡同 id 的殘留檔不讀', async () => {
+    const custom = path.join(dir, 'elsewhere');
+    const store = new CollectionStore(dir, { col_0000000000000001: custom });
+    await store.save(createCollection('col_0000000000000001', 'cat_0000000000000001', '搬走的', T0));
+    await store.save(createCollection('col_0000000000000002', 'cat_0000000000000002', '留著的', T0));
+    await fs.writeFile(
+      path.join(dir, 'col_0000000000000001.json'),
+      JSON.stringify(createCollection('col_0000000000000001', 'cat_0000000000000001', '殘留', T0)),
+      'utf8',
+    );
+    assert.equal(store.fileFor('col_0000000000000001'), path.join(custom, 'col_0000000000000001.json'));
+    assert.equal(store.hasCustomFolder('col_0000000000000001'), true);
+    assert.equal(store.hasCustomFolder('col_0000000000000002'), false);
+    const { collections, problems } = await store.list();
+    assert.deepEqual(problems, []);
+    assert.deepEqual(
+      collections.map((collection) => collection.name).sort(),
+      ['搬走的', '留著的'].sort(),
+    );
+  });
+
+  test('設定指向的檔案不存在時回報，不自己補一份', async () => {
+    const store = new CollectionStore(dir, { col_0000000000000001: path.join(dir, 'gone') });
+    const { collections, problems } = await store.list();
+    assert.deepEqual(collections, []);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0].reason, /todooo\.collectionFolders/);
+  });
+
+  test('relocate 搬檔並回傳新的對照表；搬回預設；目的地已有同 id 檔案就拒絕', async () => {
+    const store = new CollectionStore(dir);
+    const collection = createCollection('col_0000000000000001', 'cat_0000000000000001', 'x', T0);
+    await store.save(collection);
+    const custom = path.join(dir, 'custom');
+
+    const folders = await store.relocate(collection, custom);
+    assert.deepEqual(folders, { col_0000000000000001: custom });
+    await assert.rejects(fs.access(path.join(dir, 'col_0000000000000001.json')), '原檔已搬走');
+    const moved = new CollectionStore(dir, folders);
+    assert.equal((await moved.list()).collections[0].name, 'x');
+
+    await fs.writeFile(path.join(dir, 'col_0000000000000001.json'), '{}', 'utf8');
+    await assert.rejects(moved.relocate(collection, undefined), /不覆蓋/);
+    await fs.rm(path.join(dir, 'col_0000000000000001.json'));
+
+    const restored = await moved.relocate(collection, undefined);
+    assert.deepEqual(restored, {});
+    await assert.rejects(fs.access(path.join(custom, 'col_0000000000000001.json')));
+    assert.equal((await new CollectionStore(dir, restored).list()).collections[0].name, 'x');
+  });
+
   test('remove 刪檔；不合法 id 直接拒絕', async () => {
     const store = new CollectionStore(dir);
     await store.save(createCollection('col_0000000000000001', 'cat_0000000000000001', 'x', T0));

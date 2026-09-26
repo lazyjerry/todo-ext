@@ -15,9 +15,11 @@ const els = {
   colAdd: $<HTMLButtonElement>('col-add'),
   colRename: $<HTMLButtonElement>('col-rename'),
   colDelete: $<HTMLButtonElement>('col-delete'),
+  colFolder: $<HTMLButtonElement>('col-folder'),
   title: $<HTMLInputElement>('title'),
   main: $<HTMLElement>('main'),
   left: $<HTMLElement>('left'),
+  right: $<HTMLElement>('right'),
   splitter: $<HTMLElement>('splitter'),
   itemAdd: $<HTMLButtonElement>('item-add'),
   count: $<HTMLElement>('count'),
@@ -25,6 +27,8 @@ const els = {
   placeholder: $<HTMLElement>('placeholder'),
   detail: $<HTMLElement>('detail'),
   expand: $<HTMLButtonElement>('expand'),
+  childAdd: $<HTMLButtonElement>('child-add'),
+  parentTitle: $<HTMLElement>('parent-title'),
   itemDelete: $<HTMLButtonElement>('item-delete'),
   itemTitle: $<HTMLInputElement>('item-title'),
   titleCount: $<HTMLElement>('title-count'),
@@ -32,7 +36,10 @@ const els = {
   itemCategory: $<HTMLSelectElement>('item-category'),
   manageCategories: $<HTMLButtonElement>('manage-categories'),
   manageTags: $<HTMLButtonElement>('manage-tags'),
-  itemTags: $<HTMLElement>('item-tags'),
+  tagsField: $<HTMLElement>('tags-field'),
+  tagsToggle: $<HTMLButtonElement>('tags-toggle'),
+  tagsValue: $<HTMLElement>('tags-value'),
+  tagsMenu: $<HTMLElement>('tags-menu'),
   manage: $<HTMLElement>('manage'),
   itemCreated: $<HTMLInputElement>('item-created'),
   itemCompleted: $<HTMLElement>('item-completed'),
@@ -59,7 +66,9 @@ const COLOR_LABEL: Record<TagColor, string> = {
 let state: StateMessage | null = null;
 let selectedItemId: string | null = null;
 let expanded = false;
-let manageMode: 'categories' | 'tags' | null = null;
+/** 分類與標籤共用一個管理區，兩個「管理」連結都開同一塊。 */
+let manageOpen = false;
+let tagsMenuOpen = false;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const post = (message: ClientMessage): void => vscode.postMessage(message);
@@ -143,7 +152,8 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   state = message;
   if (message.focusItemId) {
     selectedItemId = message.focusItemId;
-    manageMode = null;
+    manageOpen = false;
+    closeTagsMenu();
   }
   render();
   if (message.focusItemId) {
@@ -158,7 +168,12 @@ function render(): void {
   const { collection } = state;
   applyRatio(state.ratio);
   renderHeader(state);
-  renderList(collection);
+  // 拖曳中不重畫列表，免得正在拖的那一列被換掉；放開後補畫。
+  if (dragId) {
+    renderAfterDrag = true;
+  } else {
+    renderList(collection);
+  }
   renderDetail(collection);
 }
 
@@ -170,46 +185,55 @@ function renderHeader(current: StateMessage): void {
   );
   els.colDelete.disabled = current.collections.length <= 1;
   els.colDelete.title = els.colDelete.disabled ? '至少需保留一個 Collection' : '刪除 Collection';
+  els.colFolder.title = `保存位置：${current.folder}${current.customFolder ? '' : '（預設）'}\n點一下更改`;
+  els.colFolder.classList.toggle('custom', current.customFolder);
   if (!isFocused(els.title)) {
     els.title.value = current.collection.title;
   }
 }
 
-function sortedItems(collection: Collection): TodoItem[] {
-  return [...collection.items].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
+/** items 的陣列順序就是畫面順序（頂層項目後面緊接子項目），這裡照著畫，不另外排序。 */
 function renderList(collection: Collection): void {
-  const items = sortedItems(collection);
+  const items = collection.items;
   els.count.textContent = `${items.length} 項`;
   if (!items.some((item) => item.id === selectedItemId)) {
     selectedItemId = null;
   }
   const categoryName = new Map(collection.categories.map((category) => [category.id, category.name]));
   const tagById = new Map(collection.tags.map((tag) => [tag.id, tag]));
+  const parents = new Set(items.map((item) => item.parentId).filter((parentId): parentId is string => parentId !== null));
   els.items.replaceChildren(
     ...items.map((item) => {
-      const meta = el('div', { className: 'meta' });
-      meta.append(el('span', { className: 'category', textContent: categoryName.get(item.categoryId) ?? '' }));
-      for (const tagId of item.tagIds) {
-        const tag = tagById.get(tagId);
-        if (tag) {
-          meta.append(chip(tag));
-        }
-      }
-      meta.append(el('span', { className: 'muted date', textContent: formatDateTime(item.createdAt) }));
-      const row = el(
-        'li',
-        { className: `item${item.id === selectedItemId ? ' selected' : ''}` },
-        el('div', { className: 'line' }, statusPill(item.status), el('span', { className: 'item-title', textContent: item.title || '（無標題）' })),
-        meta,
+      const line = el(
+        'div',
+        { className: 'line' },
+        statusPill(item.status),
+        el('span', { className: 'item-title', textContent: item.title || '（無標題）' }),
+        el('span', { className: 'category', textContent: categoryName.get(item.categoryId) ?? '' }),
+        el('span', { className: 'muted date', textContent: formatDateTime(item.createdAt) }),
       );
+      const classes = ['item', item.parentId === null ? 'depth-0' : 'depth-1'];
+      if (item.id === selectedItemId) {
+        classes.push('selected');
+      }
+      if (parents.has(item.id)) {
+        classes.push('parent');
+      }
+      const row = el('li', { className: classes.join(' '), draggable: true }, line);
+      const tags = item.tagIds.map((tagId) => tagById.get(tagId)).filter((tag): tag is Tag => !!tag);
+      if (tags.length > 0) {
+        row.append(el('div', { className: 'tags' }, ...tags.map((tag) => chip(tag))));
+      }
       row.dataset.id = item.id;
+      row.dataset.parent = item.parentId ?? '';
       row.addEventListener('click', () => {
         selectedItemId = item.id;
-        manageMode = null;
+        manageOpen = false;
+        closeTagsMenu();
         render();
       });
+      row.addEventListener('dragstart', (event) => startDrag(item.id, event));
+      row.addEventListener('dragend', finishDrag);
       return row;
     }),
   );
@@ -241,8 +265,15 @@ function renderDetail(collection: Collection): void {
       expanded = false;
       document.body.classList.remove('expanded');
     }
+    closeTagsMenu();
     return;
   }
+
+  const parent = item.parentId === null ? undefined : collection.items.find((entry) => entry.id === item.parentId);
+  els.parentTitle.hidden = !parent;
+  els.parentTitle.textContent = parent ? `上層：${parent.title || '（無標題）'}` : '';
+  els.childAdd.disabled = !!parent;
+  els.childAdd.title = parent ? '子項目底下不能再放子項目' : '在這個 TODO 底下新增子項目';
 
   if (!isFocused(els.itemTitle)) {
     els.itemTitle.value = item.title;
@@ -256,23 +287,7 @@ function renderDetail(collection: Collection): void {
     ...collection.categories.map((category) => el('option', { value: category.id, textContent: category.name, selected: category.id === item.categoryId })),
   );
 
-  els.itemTags.replaceChildren(
-    ...collection.tags.map((tag) => {
-      const selected = item.tagIds.includes(tag.id);
-      const button = el('button', { type: 'button', className: `tag c-${tag.color}${selected ? ' on' : ' off'}`, textContent: tag.name });
-      button.title = selected ? '點一下移除這個標籤' : '點一下加上這個標籤';
-      button.setAttribute('aria-pressed', String(selected));
-      button.addEventListener('click', () => {
-        const tagIds = selected ? item.tagIds.filter((tagId) => tagId !== tag.id) : [...item.tagIds, tag.id];
-        post({ type: 'updateItem', id: item.id, patch: { tagIds } });
-      });
-      return button;
-    }),
-  );
-  if (collection.tags.length === 0) {
-    els.itemTags.append(el('span', { className: 'muted', textContent: '還沒有標籤，按「管理」新增。' }));
-  }
-
+  renderTags(collection, item);
   renderManage(collection);
 
   if (!isFocused(els.itemCreated)) {
@@ -289,12 +304,121 @@ function updateTitleCount(): void {
   els.titleCount.textContent = `${els.itemTitle.value.length} / ${TITLE_MAX}`;
 }
 
-/** 分類與標籤的管理區：每列一個名稱輸入框，改了就送；最後一列用來新增。 */
+// ---------- 標籤多選下拉 ----------
+
+/** Collection 沒有標籤時整個欄位不顯示；要建標籤走「分類」旁的「管理」。 */
+function renderTags(collection: Collection, item: TodoItem): void {
+  els.tagsField.hidden = collection.tags.length === 0;
+  if (collection.tags.length === 0) {
+    closeTagsMenu();
+    return;
+  }
+  const selected = collection.tags.filter((tag) => item.tagIds.includes(tag.id));
+  els.tagsValue.replaceChildren(...selected.map((tag) => chip(tag)));
+  if (selected.length === 0) {
+    els.tagsValue.append(el('span', { className: 'muted', textContent: '選擇標籤' }));
+  }
+  fitChips(els.tagsValue);
+  els.tagsToggle.setAttribute('aria-expanded', String(tagsMenuOpen));
+  if (tagsMenuOpen) {
+    renderTagsMenu(collection, item);
+  }
+}
+
+/** 欄位固定一行：只留塞得下的標籤，其餘收成「+N」。 */
+function fitChips(container: HTMLElement): void {
+  const chips = Array.from(container.children) as HTMLElement[];
+  const overflowing = () => container.scrollWidth > container.clientWidth;
+  if (container.clientWidth === 0 || chips.length <= 1 || !overflowing()) {
+    return;
+  }
+  const more = el('span', { className: 'tag more' });
+  container.append(more);
+  let hidden = 0;
+  for (let index = chips.length - 1; index > 0 && overflowing(); index -= 1) {
+    chips[index].hidden = true;
+    hidden += 1;
+    more.textContent = `+${hidden}`;
+  }
+}
+
+function renderTagsMenu(collection: Collection, item: TodoItem): void {
+  els.tagsMenu.replaceChildren(
+    ...collection.tags.map((tag) => {
+      const box = el('input', { type: 'checkbox', checked: item.tagIds.includes(tag.id) });
+      box.addEventListener('change', () => {
+        const tagIds = box.checked ? [...item.tagIds, tag.id] : item.tagIds.filter((tagId) => tagId !== tag.id);
+        post({ type: 'updateItem', id: item.id, patch: { tagIds } });
+      });
+      return el('label', { className: 'multiselect-option' }, box, chip(tag));
+    }),
+  );
+  els.tagsMenu.hidden = false;
+  positionTagsMenu();
+}
+
+/** 選單用 fixed 定位貼在按鈕下方，不被右欄的捲動範圍裁掉；下方不夠高就往上開。 */
+function positionTagsMenu(): void {
+  const rect = els.tagsToggle.getBoundingClientRect();
+  const below = window.innerHeight - rect.bottom - 8;
+  const above = rect.top - 8;
+  const menu = els.tagsMenu.style;
+  menu.left = `${rect.left}px`;
+  menu.width = `${rect.width}px`;
+  if (below >= 120 || below >= above) {
+    menu.top = `${rect.bottom + 2}px`;
+    menu.bottom = '';
+    menu.maxHeight = `${Math.max(60, Math.min(220, below))}px`;
+  } else {
+    menu.top = '';
+    menu.bottom = `${window.innerHeight - rect.top + 2}px`;
+    menu.maxHeight = `${Math.max(60, Math.min(220, above))}px`;
+  }
+}
+
+function closeTagsMenu(): void {
+  tagsMenuOpen = false;
+  els.tagsMenu.hidden = true;
+  els.tagsMenu.replaceChildren();
+  els.tagsToggle.setAttribute('aria-expanded', 'false');
+}
+
+els.tagsToggle.addEventListener('click', () => {
+  tagsMenuOpen = !tagsMenuOpen;
+  if (!tagsMenuOpen) {
+    closeTagsMenu();
+  }
+  const item = currentItem();
+  if (state && item) {
+    renderTags(state.collection, item);
+  }
+});
+
+document.addEventListener('click', (event) => {
+  const target = event.target as Node;
+  if (tagsMenuOpen && !els.tagsMenu.contains(target) && !els.tagsToggle.contains(target)) {
+    closeTagsMenu();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && tagsMenuOpen) {
+    closeTagsMenu();
+    els.tagsToggle.focus();
+  }
+});
+
+els.right.addEventListener('scroll', closeTagsMenu);
+window.addEventListener('resize', closeTagsMenu);
+
+// ---------- 分類與標籤管理區 ----------
+
+/** 一個管理區兩段：分類在上、標籤在下。每列一個名稱輸入框，改了就送；最後一列用來新增。 */
 function renderManage(collection: Collection): void {
-  els.manage.hidden = manageMode === null;
-  els.manageCategories.classList.toggle('active', manageMode === 'categories');
-  els.manageTags.classList.toggle('active', manageMode === 'tags');
-  if (manageMode === null) {
+  els.manage.hidden = !manageOpen;
+  els.manageCategories.classList.toggle('active', manageOpen);
+  els.manageTags.classList.toggle('active', manageOpen);
+  if (!manageOpen) {
     els.manage.replaceChildren();
     return;
   }
@@ -302,74 +426,77 @@ function renderManage(collection: Collection): void {
   if (els.manage.contains(document.activeElement)) {
     return;
   }
-  const rows: HTMLElement[] = [];
-  if (manageMode === 'categories') {
-    rows.push(el('div', { className: 'manage-title', textContent: '分類（一次只能選一個，至少保留一個）' }));
-    for (const category of collection.categories) {
-      const name = el('input', { type: 'text', value: category.name, maxLength: 60 });
-      name.addEventListener('change', () => {
-        if (name.value.trim() !== category.name) {
-          post({ type: 'renameCategory', id: category.id, name: name.value });
-        }
-        name.blur();
-      });
-      const remove = el('button', { type: 'button', className: 'danger', textContent: '刪除', disabled: collection.categories.length <= 1 });
-      remove.addEventListener('click', () => post({ type: 'deleteCategory', id: category.id }));
-      rows.push(el('div', { className: 'manage-row' }, name, remove));
+  els.manage.replaceChildren(...categoryRows(collection), ...tagRows(collection));
+}
+
+function submitOnEnter(input: HTMLInputElement, submit: () => void): void {
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submit();
     }
-    const newName = el('input', { type: 'text', placeholder: '新分類名稱', maxLength: 60 });
-    const add = el('button', { type: 'button', className: 'primary', textContent: '新增' });
-    const submit = () => {
-      if (newName.value.trim()) {
-        post({ type: 'createCategory', name: newName.value });
-        newName.value = '';
-        newName.blur();
+  });
+}
+
+function categoryRows(collection: Collection): HTMLElement[] {
+  const rows: HTMLElement[] = [el('div', { className: 'manage-title', textContent: '分類（一次只能選一個，至少保留一個）' })];
+  for (const category of collection.categories) {
+    const name = el('input', { type: 'text', value: category.name, maxLength: 60 });
+    name.addEventListener('change', () => {
+      if (name.value.trim() !== category.name) {
+        post({ type: 'renameCategory', id: category.id, name: name.value });
       }
-    };
-    add.addEventListener('click', submit);
-    newName.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        submit();
-      }
+      name.blur();
     });
-    rows.push(el('div', { className: 'manage-row' }, newName, add));
-  } else {
-    rows.push(el('div', { className: 'manage-title', textContent: '標籤（可多選，顏色與文字自訂）' }));
-    for (const tag of collection.tags) {
-      const color = colorSelect(tag.color);
-      color.addEventListener('change', () => post({ type: 'updateTag', id: tag.id, color: color.value as TagColor }));
-      const name = el('input', { type: 'text', value: tag.name, maxLength: 60 });
-      name.addEventListener('change', () => {
-        if (name.value.trim() !== tag.name) {
-          post({ type: 'updateTag', id: tag.id, name: name.value });
-        }
-        name.blur();
-      });
-      const remove = el('button', { type: 'button', className: 'danger', textContent: '刪除' });
-      remove.addEventListener('click', () => post({ type: 'deleteTag', id: tag.id }));
-      rows.push(el('div', { className: 'manage-row' }, chip(tag, ' preview'), color, name, remove));
-    }
-    const newColor = colorSelect('blue');
-    const newName = el('input', { type: 'text', placeholder: '新標籤名稱', maxLength: 60 });
-    const add = el('button', { type: 'button', className: 'primary', textContent: '新增' });
-    const submit = () => {
-      if (newName.value.trim()) {
-        post({ type: 'createTag', name: newName.value, color: newColor.value as TagColor });
-        newName.value = '';
-        newName.blur();
-      }
-    };
-    add.addEventListener('click', submit);
-    newName.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        submit();
-      }
-    });
-    rows.push(el('div', { className: 'manage-row' }, el('span', { className: 'tag c-blue preview', textContent: '新' }), newColor, newName, add));
+    const remove = el('button', { type: 'button', className: 'danger', textContent: '刪除', disabled: collection.categories.length <= 1 });
+    remove.addEventListener('click', () => post({ type: 'deleteCategory', id: category.id }));
+    rows.push(el('div', { className: 'manage-row' }, name, remove));
   }
-  els.manage.replaceChildren(...rows);
+  const newName = el('input', { type: 'text', placeholder: '新分類名稱', maxLength: 60 });
+  const add = el('button', { type: 'button', className: 'primary', textContent: '新增' });
+  const submit = () => {
+    if (newName.value.trim()) {
+      post({ type: 'createCategory', name: newName.value });
+      newName.value = '';
+      newName.blur();
+    }
+  };
+  add.addEventListener('click', submit);
+  submitOnEnter(newName, submit);
+  rows.push(el('div', { className: 'manage-row' }, newName, add));
+  return rows;
+}
+
+function tagRows(collection: Collection): HTMLElement[] {
+  const rows: HTMLElement[] = [el('div', { className: 'manage-title', textContent: '標籤（可多選，顏色與文字自訂）' })];
+  for (const tag of collection.tags) {
+    const color = colorSelect(tag.color);
+    color.addEventListener('change', () => post({ type: 'updateTag', id: tag.id, color: color.value as TagColor }));
+    const name = el('input', { type: 'text', value: tag.name, maxLength: 60 });
+    name.addEventListener('change', () => {
+      if (name.value.trim() !== tag.name) {
+        post({ type: 'updateTag', id: tag.id, name: name.value });
+      }
+      name.blur();
+    });
+    const remove = el('button', { type: 'button', className: 'danger', textContent: '刪除' });
+    remove.addEventListener('click', () => post({ type: 'deleteTag', id: tag.id }));
+    rows.push(el('div', { className: 'manage-row' }, chip(tag, ' preview'), color, name, remove));
+  }
+  const newColor = colorSelect('blue');
+  const newName = el('input', { type: 'text', placeholder: '新標籤名稱', maxLength: 60 });
+  const add = el('button', { type: 'button', className: 'primary', textContent: '新增' });
+  const submit = () => {
+    if (newName.value.trim()) {
+      post({ type: 'createTag', name: newName.value, color: newColor.value as TagColor });
+      newName.value = '';
+      newName.blur();
+    }
+  };
+  add.addEventListener('click', submit);
+  submitOnEnter(newName, submit);
+  rows.push(el('div', { className: 'manage-row' }, el('span', { className: 'tag c-blue preview', textContent: '新' }), newColor, newName, add));
+  return rows;
 }
 
 function colorSelect(current: TagColor): HTMLSelectElement {
@@ -383,6 +510,162 @@ function colorSelect(current: TagColor): HTMLSelectElement {
   });
   return select;
 }
+
+// ---------- 拖曳排序 ----------
+
+interface DropTarget {
+  parentId: string | null;
+  /** 在目標同層裡（不含被拖的那個）的位置。 */
+  index: number;
+  zone: 'before' | 'after' | 'into';
+  row: HTMLElement;
+}
+
+let dragId: string | null = null;
+let dropTarget: DropTarget | null = null;
+let renderAfterDrag = false;
+
+function startDrag(id: string, event: DragEvent): void {
+  dragId = id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+  }
+  // 拖曳的殘影在 dragstart 當下截圖，淡化樣式晚一拍再加，殘影才不會跟著變淡。
+  setTimeout(() => {
+    for (const row of rowsOf(id)) {
+      row.classList.add('dragging');
+    }
+  }, 0);
+}
+
+/** 這個項目的列，加上它的子項目的列：父項目拖動時整組一起淡化。 */
+function rowsOf(id: string): HTMLElement[] {
+  return Array.from(els.items.children).filter(
+    (row): row is HTMLElement => row instanceof HTMLElement && (row.dataset.id === id || row.dataset.parent === id),
+  );
+}
+
+function finishDrag(): void {
+  dragId = null;
+  dropTarget = null;
+  clearIndicator();
+  for (const row of Array.from(els.items.children)) {
+    row.classList.remove('dragging');
+  }
+  if (renderAfterDrag) {
+    renderAfterDrag = false;
+    render();
+  }
+}
+
+/**
+ * 依滑鼠在目標列的高度算落點：頂層列分上／中／下三段（之前／變成子項目／之後），子項目列只分上下。
+ * 帶著子項目的頂層項目只能留在頂層：只認頂層列的上下兩段，子項目列不當目標。
+ */
+function computeTarget(row: HTMLElement, clientY: number): DropTarget | null {
+  if (!state || !dragId) {
+    return null;
+  }
+  const items = state.collection.items;
+  const target = items.find((entry) => entry.id === row.dataset.id);
+  if (!target || target.id === dragId || target.parentId === dragId) {
+    return null;
+  }
+  const heavy = items.some((entry) => entry.parentId === dragId);
+  const rect = row.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
+  let zone: DropTarget['zone'];
+  if (target.parentId === null && !heavy) {
+    zone = ratio < 0.25 ? 'before' : ratio > 0.75 ? 'after' : 'into';
+  } else if (target.parentId === null) {
+    zone = ratio < 0.5 ? 'before' : 'after';
+  } else if (heavy) {
+    return null;
+  } else {
+    zone = ratio < 0.5 ? 'before' : 'after';
+  }
+  if (zone === 'into') {
+    const count = items.filter((entry) => entry.parentId === target.id && entry.id !== dragId).length;
+    return { parentId: target.id, index: count, zone, row };
+  }
+  const siblings = items.filter((entry) => entry.parentId === target.parentId && entry.id !== dragId);
+  const index = siblings.findIndex((entry) => entry.id === target.id) + (zone === 'after' ? 1 : 0);
+  return { parentId: target.parentId, index, zone, row };
+}
+
+/** 放在列表最底下的空白處：接到頂層的最後面。 */
+function endTarget(): DropTarget | null {
+  if (!state || !dragId) {
+    return null;
+  }
+  const rows = Array.from(els.items.children).filter((row): row is HTMLElement => row instanceof HTMLElement && !!row.dataset.id);
+  const last = rows[rows.length - 1];
+  if (!last) {
+    return null;
+  }
+  const count = state.collection.items.filter((entry) => entry.parentId === null && entry.id !== dragId).length;
+  return { parentId: null, index: count, zone: 'after', row: last };
+}
+
+function clearIndicator(): void {
+  for (const row of Array.from(els.items.children)) {
+    row.classList.remove('drop-before', 'drop-after', 'drop-into');
+  }
+}
+
+function showIndicator(target: DropTarget | null): void {
+  clearIndicator();
+  if (!target) {
+    return;
+  }
+  let row = target.row;
+  // 頂層項目的「之後」是整組（含子項目）之後，線畫在它最後一個子項目底下。
+  if (target.zone === 'after' && target.parentId === null) {
+    let next = row.nextElementSibling;
+    while (next instanceof HTMLElement && next.dataset.parent === target.row.dataset.id) {
+      row = next;
+      next = row.nextElementSibling;
+    }
+  }
+  row.classList.add(`drop-${target.zone}`);
+}
+
+els.items.addEventListener('dragover', (event) => {
+  if (!dragId) {
+    return;
+  }
+  const element = event.target instanceof Element ? event.target : null;
+  const row = element?.closest<HTMLElement>('li.item') ?? null;
+  const target = row ? computeTarget(row, event.clientY) : endTarget();
+  if (target?.row !== dropTarget?.row || target?.zone !== dropTarget?.zone || target?.index !== dropTarget?.index) {
+    dropTarget = target;
+    showIndicator(target);
+  }
+  if (target) {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+});
+
+els.items.addEventListener('dragleave', (event) => {
+  const related = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+  if (!related || !els.items.contains(related)) {
+    dropTarget = null;
+    clearIndicator();
+  }
+});
+
+els.items.addEventListener('drop', (event) => {
+  if (!dragId || !dropTarget) {
+    return;
+  }
+  event.preventDefault();
+  post({ type: 'moveItem', id: dragId, parentId: dropTarget.parentId, index: dropTarget.index });
+  finishDrag();
+});
 
 // ---------- 左右比例 ----------
 
@@ -421,7 +704,8 @@ els.splitter.addEventListener('pointerdown', (event) => {
 
 els.collection.addEventListener('change', () => {
   selectedItemId = null;
-  manageMode = null;
+  manageOpen = false;
+  closeTagsMenu();
   post({ type: 'selectCollection', id: els.collection.value });
 });
 els.colAdd.addEventListener('click', () => post({ type: 'createCollection' }));
@@ -435,6 +719,11 @@ els.colDelete.addEventListener('click', () => {
     post({ type: 'deleteCollection', id: state.collection.id });
   }
 });
+els.colFolder.addEventListener('click', () => {
+  if (state) {
+    post({ type: 'setCollectionFolder', id: state.collection.id });
+  }
+});
 
 els.title.addEventListener('input', () => debounce('title', () => post({ type: 'setTitle', title: els.title.value })));
 els.title.addEventListener('blur', () => {
@@ -445,6 +734,11 @@ els.title.addEventListener('blur', () => {
 });
 
 els.itemAdd.addEventListener('click', () => post({ type: 'createItem' }));
+els.childAdd.addEventListener('click', () => {
+  if (selectedItemId) {
+    post({ type: 'createItem', parentId: selectedItemId });
+  }
+});
 els.itemDelete.addEventListener('click', () => {
   if (selectedItemId) {
     post({ type: 'deleteItem', id: selectedItemId });
@@ -452,6 +746,7 @@ els.itemDelete.addEventListener('click', () => {
 });
 els.expand.addEventListener('click', () => {
   expanded = !expanded;
+  closeTagsMenu();
   render();
 });
 
@@ -514,17 +809,13 @@ els.itemCreated.addEventListener('change', () => {
   }
 });
 
-els.manageCategories.addEventListener('click', () => {
-  manageMode = manageMode === 'categories' ? null : 'categories';
+function toggleManage(): void {
+  manageOpen = !manageOpen;
   if (state) {
     renderManage(state.collection);
   }
-});
-els.manageTags.addEventListener('click', () => {
-  manageMode = manageMode === 'tags' ? null : 'tags';
-  if (state) {
-    renderManage(state.collection);
-  }
-});
+}
+els.manageCategories.addEventListener('click', toggleManage);
+els.manageTags.addEventListener('click', toggleManage);
 
 post({ type: 'ready' });

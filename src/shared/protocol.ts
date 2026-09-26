@@ -13,6 +13,10 @@ export type HostMessage =
       collection: Collection;
       /** 左欄佔整個面板寬度的比例。 */
       ratio: number;
+      /** 目前這個 Collection 的保存資料夾（顯示用，家目錄縮成 `~`）。 */
+      folder: string;
+      /** 是否另設了保存位置，不在預設資料夾。 */
+      customFolder: boolean;
       /** 剛新增的項目：webview 要選到它並把游標放到標題。 */
       focusItemId?: string;
     }
@@ -24,9 +28,11 @@ export type ClientMessage =
   | { type: 'createCollection' }
   | { type: 'renameCollection'; id: string }
   | { type: 'deleteCollection'; id: string }
+  | { type: 'setCollectionFolder'; id: string }
   | { type: 'setTitle'; title: string }
-  | { type: 'createItem' }
+  | { type: 'createItem'; parentId?: string }
   | { type: 'updateItem'; id: string; patch: ItemPatch }
+  | { type: 'moveItem'; id: string; parentId: string | null; index: number }
   | { type: 'deleteItem'; id: string }
   | { type: 'createCategory'; name: string }
   | { type: 'renameCategory'; id: string; name: string }
@@ -68,11 +74,13 @@ export function isClientMessage(value: unknown): value is ClientMessage {
   switch (msg.type) {
     case 'ready':
     case 'createCollection':
-    case 'createItem':
       return true;
+    case 'createItem':
+      return msg.parentId === undefined || isStr(msg.parentId);
     case 'selectCollection':
     case 'renameCollection':
     case 'deleteCollection':
+    case 'setCollectionFolder':
     case 'deleteItem':
     case 'deleteCategory':
     case 'deleteTag':
@@ -81,6 +89,8 @@ export function isClientMessage(value: unknown): value is ClientMessage {
       return isStr(msg.title);
     case 'updateItem':
       return isStr(msg.id) && isItemPatch(msg.patch);
+    case 'moveItem':
+      return isStr(msg.id) && (msg.parentId === null || isStr(msg.parentId)) && Number.isInteger(msg.index) && (msg.index as number) >= 0;
     case 'createCategory':
       return isStr(msg.name);
     case 'renameCategory':

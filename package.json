@@ -74,6 +74,15 @@
           "default": "",
           "scope": "machine",
           "markdownDescription": "Collection JSON 的存放資料夾。留空使用 `~/.todooo`；可用 `~` 開頭。每個 Collection 是 `collections/<id>.json` 一份檔案。"
+        },
+        "todooo.collectionFolders": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "個別 Collection 的保存資料夾：鍵是 Collection id、值是資料夾路徑（可用 `~` 開頭），該 Collection 存成 `<資料夾>/<id>.json`。平常用面板上的 📁 按鈕設定即可；換到另一台機器時，把同一組設定填進使用者設定就能接回同一份檔案。只能在使用者設定層級設定。"
         }
       }
     }

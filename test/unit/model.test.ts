@@ -1,15 +1,19 @@
 import * as assert from 'node:assert/strict';
 
+import type { Collection } from '../../src/core/model';
 import {
   addCategory,
   addTag,
   applyItemPatch,
+  canonicalOrder,
   createCollection,
   createItem,
   DEFAULT_CATEGORY_NAME,
   formatDate,
+  moveItem,
   parseCollection,
   removeCategory,
+  removeItem,
   removeTag,
   renameCategory,
   TITLE_MAX,
@@ -105,6 +109,89 @@ suite('createItem 與 applyItemPatch', () => {
     const replaced = withItem(next, { ...item, title: '改了' }, T2);
     assert.equal(replaced.items[1].title, '改了');
     assert.equal(replaced.items.length, 2);
+  });
+});
+
+/** 三個頂層 A、B、C，A 底下兩個子項目 a1、a2。陣列順序：A a1 a2 B C。 */
+function tree(): Collection {
+  let collection = createCollection('col_0000000000000001', 'cat_0000000000000001', '工作', T0);
+  for (const id of ['C', 'B', 'A']) {
+    collection = withItem(collection, { ...createItem(`todo_${id}`, collection, T0), title: id }, T0);
+  }
+  for (const id of ['a1', 'a2']) {
+    collection = withItem(collection, { ...createItem(`todo_${id}`, collection, T0, 'todo_A'), title: id }, T0);
+  }
+  return collection;
+}
+
+const ids = (collection: Collection) => collection.items.map((item) => item.id.slice('todo_'.length));
+
+suite('順序與父子', () => {
+  test('陣列順序就是畫面順序：頂層新項目在最前面，子項目接在父項目既有子項目後面', () => {
+    const collection = tree();
+    assert.deepEqual(ids(collection), ['A', 'a1', 'a2', 'B', 'C']);
+    assert.equal(collection.items[1].parentId, 'todo_A');
+  });
+
+  test('createItem 的 parentId 指向子項目或不存在的項目時退回頂層', () => {
+    const collection = tree();
+    assert.equal(createItem('todo_x', collection, T1, 'todo_a1').parentId, null);
+    assert.equal(createItem('todo_x', collection, T1, 'todo_ghost').parentId, null);
+  });
+
+  test('頂層重排：父項目搬動時子項目跟著走', () => {
+    const moved = moveItem(tree(), 'todo_A', null, 1, T1)!;
+    assert.deepEqual(ids(moved), ['B', 'A', 'a1', 'a2', 'C']);
+    assert.equal(moved.items[1].updatedAt, T0.toISOString(), '純換順序不動項目的 updatedAt');
+    assert.deepEqual(ids(moveItem(tree(), 'todo_A', null, 99, T1)!), ['B', 'C', 'A', 'a1', 'a2'], 'index 超過就放最後');
+  });
+
+  test('子項目搬到頂層變成父項目；頂層項目搬進別人底下變成子項目', () => {
+    const promoted = moveItem(tree(), 'todo_a1', null, 0, T1)!;
+    assert.deepEqual(ids(promoted), ['a1', 'A', 'a2', 'B', 'C']);
+    assert.equal(promoted.items[0].parentId, null);
+    assert.equal(promoted.items[0].updatedAt, T1.toISOString());
+
+    const nested = moveItem(tree(), 'todo_C', 'todo_B', 0, T1)!;
+    assert.deepEqual(ids(nested), ['A', 'a1', 'a2', 'B', 'C']);
+    assert.equal(nested.items[4].parentId, 'todo_B');
+  });
+
+  test('同一個父項目底下換順序、換到另一個父項目底下', () => {
+    assert.deepEqual(ids(moveItem(tree(), 'todo_a2', 'todo_A', 0, T1)!), ['A', 'a2', 'a1', 'B', 'C']);
+    assert.deepEqual(ids(moveItem(tree(), 'todo_a1', 'todo_B', 0, T1)!), ['A', 'a2', 'B', 'a1', 'C']);
+  });
+
+  test('只有兩層：帶著子項目的不能變子項目、子項目不能當父項目、不能搬到自己底下', () => {
+    assert.equal(moveItem(tree(), 'todo_A', 'todo_B', 0, T1), undefined);
+    assert.equal(moveItem(tree(), 'todo_B', 'todo_a1', 0, T1), undefined);
+    assert.equal(moveItem(tree(), 'todo_B', 'todo_B', 0, T1), undefined);
+    assert.equal(moveItem(tree(), 'todo_ghost', null, 0, T1), undefined);
+  });
+
+  test('刪父項目連子項目一起刪', () => {
+    assert.deepEqual(ids(removeItem(tree(), 'todo_A', T1)), ['B', 'C']);
+    assert.deepEqual(ids(removeItem(tree(), 'todo_a1', T1)), ['A', 'a2', 'B', 'C']);
+  });
+
+  test('canonicalOrder：父項目不存在或疊到第三層的升成頂層', () => {
+    const base = tree();
+    const orphan = { ...createItem('todo_o', base, T1), parentId: 'todo_ghost' };
+    const third = { ...createItem('todo_t', base, T1), parentId: 'todo_a1' };
+    const ordered = canonicalOrder([...base.items, orphan, third]);
+    assert.deepEqual(
+      ordered.map((item) => item.id.slice('todo_'.length)),
+      ['A', 'a1', 'a2', 'B', 'C', 'o', 't'],
+    );
+    assert.equal(ordered.every((item) => item.parentId === null || item.parentId === 'todo_A'), true);
+  });
+
+  test('parseCollection 保留父子關係並整理順序', () => {
+    const raw = JSON.parse(JSON.stringify(tree()));
+    raw.items = [...raw.items].reverse();
+    const parsed = parseCollection(raw, nextId)!;
+    assert.deepEqual(ids(parsed), ['C', 'B', 'A', 'a2', 'a1']);
+    assert.equal(parsed.items[3].parentId, 'todo_A');
   });
 });
 

@@ -14,6 +14,8 @@
   --secondary-bg: var(--vscode-button-secondaryBackground);
   --secondary-fg: var(--vscode-button-secondaryForeground);
   --danger: var(--vscode-errorForeground, #f14c4c);
+  --dropdown-bg: var(--vscode-dropdown-background, var(--vscode-input-background));
+  --dropdown-border: var(--vscode-dropdown-border, var(--border));
 }
 
 html,
@@ -152,6 +154,10 @@ button.link.active {
   padding: 3px 7px;
 }
 
+#col-folder.custom {
+  box-shadow: inset 0 0 0 1px var(--focus);
+}
+
 #title {
   flex: 1;
   min-width: 0;
@@ -228,7 +234,7 @@ body.expanded #splitter {
   flex: none;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  padding: 4px 12px;
 }
 
 #count {
@@ -240,15 +246,18 @@ body.expanded #splitter {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 0 0 12px;
+  padding: 0 0 24px;
   list-style: none;
   overflow: auto;
 }
 
+/* 一列：狀態、標題、分類、日期同一行；有標籤才多一行。字級與間距都比細節區小一號。 */
 .item {
-  padding: 6px 12px;
+  position: relative;
+  padding: 3px 10px 3px 8px;
   border-left: 3px solid transparent;
   cursor: pointer;
+  user-select: none;
 }
 
 .item:hover {
@@ -264,8 +273,10 @@ body.expanded #splitter {
 .item .line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .item-title {
@@ -276,18 +287,10 @@ body.expanded #splitter {
   text-overflow: ellipsis;
 }
 
-.item .meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  margin-top: 3px;
-  padding-left: 2px;
-  font-size: 11px;
-}
-
 .item .category {
+  flex: none;
   color: var(--muted);
+  font-size: 10px;
 }
 
 .item .category:not(:empty)::before {
@@ -295,17 +298,86 @@ body.expanded #splitter {
 }
 
 .item .date {
-  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+}
+
+.item .tags {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding-left: 2px;
+  overflow: hidden;
+}
+
+.item .tags .tag {
+  flex: none;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* 子項目縮排，前面畫一個小轉角。 */
+.item.depth-1 {
+  padding-left: 24px;
+}
+
+.item.depth-1 .line::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: -6px 1px 0 0;
+  border-left: 1px solid var(--muted);
+  border-bottom: 1px solid var(--muted);
+  opacity: 0.7;
+}
+
+/* 拖曳中：被拖的整組淡化；落點畫線或框。 */
+.item.dragging {
+  opacity: 0.35;
+}
+
+.item.drop-before::before,
+.item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--focus);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.item.drop-before::before {
+  top: -1px;
+}
+
+.item.drop-after::after {
+  bottom: -1px;
+}
+
+.item.depth-1.drop-before::before,
+.item.depth-1.drop-after::after {
+  left: 24px;
+}
+
+.item.drop-into {
+  box-shadow: inset 0 0 0 2px var(--focus);
+  border-radius: 3px;
 }
 
 /* ---------- 狀態 ---------- */
 
 .status {
   flex: none;
-  padding: 1px 7px;
+  padding: 0 6px;
   border-radius: 10px;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 10px;
+  line-height: 1.6;
   white-space: nowrap;
   color: #fff;
 }
@@ -346,31 +418,90 @@ select.st-5 { border-left: 4px solid #8a5fc7; }
 .c-pink   { background: rgba(225, 90, 160, 0.3);   border-color: rgba(225, 90, 160, 0.7); }
 .c-red    { background: rgba(225, 70, 70, 0.3);    border-color: rgba(225, 70, 70, 0.7); }
 
-button.tag {
-  cursor: pointer;
-  color: var(--vscode-foreground);
-}
-
-button.tag.off {
-  background: transparent;
-  opacity: 0.6;
-}
-
-button.tag.off:hover {
-  opacity: 1;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 26px;
-  align-items: center;
+.tag.more {
+  color: var(--secondary-fg);
+  background: var(--secondary-bg);
+  border-color: transparent;
 }
 
 select.color {
   width: 64px;
   padding-left: 10px;
+}
+
+/* ---------- 標籤多選下拉 ---------- */
+
+.multiselect-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 2px 6px;
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  text-align: left;
+}
+
+.multiselect-toggle:hover {
+  filter: none;
+}
+
+.multiselect-toggle:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+/* 固定一行：塞不下的標籤由腳本藏起來換成「+N」。 */
+.multiselect-value {
+  display: flex;
+  flex: 1;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.multiselect-value .tag {
+  flex: none;
+}
+
+.multiselect-arrow {
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.multiselect-menu {
+  position: fixed;
+  z-index: 100;
+  padding: 4px;
+  overflow: auto;
+  background: var(--dropdown-bg);
+  border: 1px solid var(--dropdown-border);
+  border-radius: 3px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.multiselect-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.multiselect-option:hover {
+  background: var(--hover);
+}
+
+.multiselect-option input {
+  margin: 0;
 }
 
 /* ---------- 右欄細節 ---------- */
@@ -388,6 +519,20 @@ select.color {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#parent-title {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .field {
@@ -454,6 +599,11 @@ select.color {
 .manage-title {
   font-size: 11px;
   color: var(--muted);
+}
+
+.manage-title + .manage-title,
+.manage-row + .manage-title {
+  margin-top: 8px;
 }
 
 .manage-row {

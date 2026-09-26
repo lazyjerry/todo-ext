@@ -38,6 +38,8 @@ export interface TodoItem {
   status: Status;
   categoryId: string;
   tagIds: string[];
+  /** 子項目掛在哪個頂層項目底下；頂層項目為 null。只有兩層，子項目底下不能再放子項目。 */
+  parentId: string | null;
   /** ISO 8601。 */
   createdAt: string;
   /** 狀態切成已完成／失敗時記下；切回其他狀態就清掉。 */
@@ -123,8 +125,10 @@ export function defaultCategoryId(collection: Collection): string {
   return fallback.id;
 }
 
-export function createItem(id: string, collection: Collection, now: Date): TodoItem {
+/** parentId 指向的不是頂層項目時退回頂層，不讓資料出現第三層。 */
+export function createItem(id: string, collection: Collection, now: Date, parentId: string | null = null): TodoItem {
   const iso = now.toISOString();
+  const parent = parentId === null ? undefined : collection.items.find((entry) => entry.id === parentId && entry.parentId === null);
   return {
     id,
     title: '',
@@ -132,6 +136,7 @@ export function createItem(id: string, collection: Collection, now: Date): TodoI
     status: '未完成',
     categoryId: defaultCategoryId(collection),
     tagIds: [],
+    parentId: parent ? parent.id : null,
     createdAt: iso,
     completedAt: null,
     updatedAt: iso,
@@ -172,14 +177,77 @@ export function applyItemPatch(collection: Collection, item: TodoItem, patch: It
   return next;
 }
 
+/** 新的頂層項目插到最前面；新的子項目接在父項目既有子項目的最後面（子項目通常是照步驟寫的）。 */
 export function withItem(collection: Collection, item: TodoItem, now: Date): Collection {
   const index = collection.items.findIndex((entry) => entry.id === item.id);
-  const items = index < 0 ? [item, ...collection.items] : collection.items.map((entry) => (entry.id === item.id ? item : entry));
-  return touch({ ...collection, items }, now);
+  let items: TodoItem[];
+  if (index >= 0) {
+    items = collection.items.map((entry) => (entry.id === item.id ? item : entry));
+  } else if (item.parentId === null) {
+    items = [item, ...collection.items];
+  } else {
+    items = [...collection.items, item];
+  }
+  return touch({ ...collection, items: canonicalOrder(items) }, now);
 }
 
+/** 刪父項目時子項目一起刪。 */
 export function removeItem(collection: Collection, itemId: string, now: Date): Collection {
-  return touch({ ...collection, items: collection.items.filter((item) => item.id !== itemId) }, now);
+  return touch({ ...collection, items: collection.items.filter((item) => item.id !== itemId && item.parentId !== itemId) }, now);
+}
+
+// ---------- 順序與父子 ----------
+
+/**
+ * items 陣列的順序就是畫面順序：頂層項目依序排列，每個頂層項目後面緊接著它的子項目。
+ * 所有會動到 items 的操作最後都經過這裡，陣列永遠維持這個形狀，畫面端不必再排序。
+ * 父項目不存在、或父項目本身是子項目（第三層）的，升成頂層，不丟資料。
+ */
+export function canonicalOrder(items: readonly TodoItem[]): TodoItem[] {
+  const topIds = new Set(items.filter((item) => item.parentId === null).map((item) => item.id));
+  const tops: TodoItem[] = [];
+  const children = new Map<string, TodoItem[]>();
+  for (const item of items) {
+    if (item.parentId !== null && topIds.has(item.parentId)) {
+      const list = children.get(item.parentId) ?? [];
+      list.push(item);
+      children.set(item.parentId, list);
+    } else {
+      tops.push(item.parentId === null ? item : { ...item, parentId: null });
+    }
+  }
+  return tops.flatMap((item) => [item, ...(children.get(item.id) ?? [])]);
+}
+
+export function childrenOf(collection: Collection, parentId: string): TodoItem[] {
+  return collection.items.filter((item) => item.parentId === parentId);
+}
+
+/**
+ * 把項目搬到 parentId 底下（null 代表頂層）的第 index 個位置；index 以「不含自己的同層項目」計，超出範圍就放最後。
+ * 只有兩層：帶著子項目的頂層項目不能變成別人的子項目，子項目也不能當父項目；不允許時回 undefined。
+ * 父項目搬動時子項目跟著走，關係不變。
+ */
+export function moveItem(collection: Collection, itemId: string, parentId: string | null, index: number, now: Date): Collection | undefined {
+  const item = collection.items.find((entry) => entry.id === itemId);
+  if (!item) {
+    return undefined;
+  }
+  if (parentId !== null) {
+    const parent = collection.items.find((entry) => entry.id === parentId);
+    const hasChildren = collection.items.some((entry) => entry.parentId === itemId);
+    if (!parent || parent.parentId !== null || parent.id === itemId || hasChildren) {
+      return undefined;
+    }
+  }
+  const moved: TodoItem = parentId === item.parentId ? item : { ...item, parentId, updatedAt: now.toISOString() };
+  const rest = collection.items.filter((entry) => entry.id !== itemId);
+  const siblings = rest.filter((entry) => entry.parentId === parentId);
+  const at = Math.max(0, Math.min(Math.floor(index), siblings.length));
+  // 先排好同層的順序，其他項目原順序放前面；canonicalOrder 會把子項目接回各自的父項目後面。
+  const reordered = [...siblings.slice(0, at), moved, ...siblings.slice(at)];
+  const others = rest.filter((entry) => entry.parentId !== parentId);
+  return touch({ ...collection, items: canonicalOrder([...others, ...reordered]) }, now);
 }
 
 // ---------- Category ----------
@@ -328,6 +396,7 @@ export function parseCollection(raw: unknown, fallbackId: (prefix: string) => st
       status: '未完成',
       categoryId: defaultCategoryId(base),
       tagIds: [],
+      parentId: typeof item.parentId === 'string' ? item.parentId : null,
       createdAt,
       completedAt: null,
       updatedAt: createdAt,
@@ -348,5 +417,7 @@ export function parseCollection(raw: unknown, fallbackId: (prefix: string) => st
     patched.completedAt = DONE_STATUSES.has(patched.status) ? iso(item.completedAt, patched.updatedAt) : null;
     base.items.push(patched);
   }
+  // 手改過的檔案可能有指向不存在父項目、或疊到第三層的項目，整理成兩層並排好順序。
+  base.items = canonicalOrder(base.items);
   return base;
 }
