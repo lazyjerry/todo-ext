@@ -1,9 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- 文件夾＋正在書寫的筆。筆疊在文件夾上，先用底色描一圈粗邊，再畫白色筆身，讓筆與文件夾外框分得開。 -->
   <rect x="8" y="8" width="112" height="112" rx="22" fill="#2f7fd1"/>
-  <g fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M30 40 l10 10 l18 -20"/>
-    <path d="M30 78 l10 10 l18 -20"/>
-    <path d="M70 40 h28"/>
-    <path d="M70 78 h28"/>
+  <g fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 32 H50 L58 40 H106 V98 H22 Z"/>
+    <path d="M26 90 q5 -7 10 0 t8 0" stroke-width="6"/>
+  </g>
+  <g transform="translate(46 88) rotate(-45)">
+    <g fill="#2f7fd1" stroke="#2f7fd1" stroke-width="10" stroke-linejoin="round">
+      <path d="M0 0 L16 -9 L16 9 Z"/>
+      <rect x="16" y="-9" width="50" height="18" rx="3"/>
+      <rect x="66" y="-7" width="10" height="14" rx="2"/>
+    </g>
+    <g fill="#ffffff">
+      <path d="M0 0 L16 -9 L16 9 Z"/>
+      <rect x="16" y="-9" width="50" height="18" rx="3"/>
+      <rect x="66" y="-7" width="10" height="14" rx="2"/>
+    </g>
+    <path d="M16 -9 V9" stroke="#2f7fd1" stroke-width="3"/>
+    <path d="M66 -9 V9" stroke="#2f7fd1" stroke-width="3"/>
   </g>
 </svg>

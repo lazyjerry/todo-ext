@@ -45,7 +45,7 @@
         {
           "id": "todooo",
           "title": "todooo",
-          "icon": "resources/panel.svg"
+          "icon": "resources/panel-folder-pen.svg"
         }
       ]
     },
@@ -55,7 +55,7 @@
           "type": "webview",
           "id": "todooo.panel",
           "name": "todooo",
-          "icon": "resources/panel.svg",
+          "icon": "resources/panel-folder-pen.svg",
           "contextualTitle": "todooo"
         }
       ]
