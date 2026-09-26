@@ -1,0 +1,13 @@
+node_modules/
+out/
+media/main.js
+media/*.map
+.vscode-test/
+*.vsix
+*.log
+.DS_Store
+CLAUDE.md
+AGENTS.md
+.claude/
+.agents/
+**/*衝突的複本*

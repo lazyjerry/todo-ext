@@ -1,0 +1,108 @@
+import type { Collection, ItemPatch, TagColor } from '../core/model';
+import { isStatus, isTagColor } from '../core/model';
+
+export interface CollectionSummary {
+  id: string;
+  name: string;
+}
+
+export type HostMessage =
+  | {
+      type: 'state';
+      collections: CollectionSummary[];
+      collection: Collection;
+      /** 左欄佔整個面板寬度的比例。 */
+      ratio: number;
+      /** 剛新增的項目：webview 要選到它並把游標放到標題。 */
+      focusItemId?: string;
+    }
+  | { type: 'empty'; reason: string };
+
+export type ClientMessage =
+  | { type: 'ready' }
+  | { type: 'selectCollection'; id: string }
+  | { type: 'createCollection' }
+  | { type: 'renameCollection'; id: string }
+  | { type: 'deleteCollection'; id: string }
+  | { type: 'setTitle'; title: string }
+  | { type: 'createItem' }
+  | { type: 'updateItem'; id: string; patch: ItemPatch }
+  | { type: 'deleteItem'; id: string }
+  | { type: 'createCategory'; name: string }
+  | { type: 'renameCategory'; id: string; name: string }
+  | { type: 'deleteCategory'; id: string }
+  | { type: 'createTag'; name: string; color: TagColor }
+  | { type: 'updateTag'; id: string; name?: string; color?: TagColor }
+  | { type: 'deleteTag'; id: string }
+  | { type: 'setRatio'; ratio: number };
+
+const isStr = (value: unknown): value is string => typeof value === 'string';
+
+function isItemPatch(value: unknown): value is ItemPatch {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const patch = value as Record<string, unknown>;
+  const allowed = ['title', 'content', 'status', 'categoryId', 'tagIds', 'createdAt'];
+  for (const key of Object.keys(patch)) {
+    if (!allowed.includes(key)) {
+      return false;
+    }
+  }
+  return (
+    (patch.title === undefined || isStr(patch.title)) &&
+    (patch.content === undefined || isStr(patch.content)) &&
+    (patch.status === undefined || isStatus(patch.status)) &&
+    (patch.categoryId === undefined || isStr(patch.categoryId)) &&
+    (patch.tagIds === undefined || (Array.isArray(patch.tagIds) && patch.tagIds.every(isStr))) &&
+    (patch.createdAt === undefined || isStr(patch.createdAt))
+  );
+}
+
+/** webview 送來的東西一律當不可信：型別逐欄檢查，指令名稱只認清單上的。 */
+export function isClientMessage(value: unknown): value is ClientMessage {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const msg = value as Record<string, unknown>;
+  switch (msg.type) {
+    case 'ready':
+    case 'createCollection':
+    case 'createItem':
+      return true;
+    case 'selectCollection':
+    case 'renameCollection':
+    case 'deleteCollection':
+    case 'deleteItem':
+    case 'deleteCategory':
+    case 'deleteTag':
+      return isStr(msg.id);
+    case 'setTitle':
+      return isStr(msg.title);
+    case 'updateItem':
+      return isStr(msg.id) && isItemPatch(msg.patch);
+    case 'createCategory':
+      return isStr(msg.name);
+    case 'renameCategory':
+      return isStr(msg.id) && isStr(msg.name);
+    case 'createTag':
+      return isStr(msg.name) && isTagColor(msg.color);
+    case 'updateTag':
+      return isStr(msg.id) && (msg.name === undefined || isStr(msg.name)) && (msg.color === undefined || isTagColor(msg.color));
+    case 'setRatio':
+      return typeof msg.ratio === 'number' && Number.isFinite(msg.ratio);
+    default:
+      return false;
+  }
+}
+
+export const RATIO_MIN = 0.2;
+export const RATIO_MAX = 0.8;
+export const RATIO_DEFAULT = 0.6;
+
+export function clampRatio(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return RATIO_DEFAULT;
+  }
+  return Math.min(RATIO_MAX, Math.max(RATIO_MIN, Math.round(value * 100) / 100));
+}

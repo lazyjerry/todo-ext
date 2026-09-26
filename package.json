@@ -1,0 +1,87 @@
+{
+  "name": "todooo",
+  "displayName": "todooo",
+  "description": "全域、跨工作區的 TODO List。多個 Collection 各存成一份 JSON，左列表右細節的兩欄面板，狀態、分類與 Notion 風格的自訂標籤。",
+  "version": "0.1.0",
+  "publisher": "workjerry",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lazyjerry/todo-ext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lazyjerry/todo-ext/issues"
+  },
+  "homepage": "https://github.com/lazyjerry/todo-ext#readme",
+  "keywords": [
+    "todo",
+    "task",
+    "checklist",
+    "collection"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "icon": "resources/icon.png",
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "todooo.open",
+        "title": "todooo: Open TODO List"
+      }
+    ],
+    "configuration": {
+      "title": "todooo",
+      "properties": {
+        "todooo.dataFolder": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Collection JSON 的存放資料夾。留空使用 `~/.todooo`；可用 `~` 開頭。每個 Collection 是 `collections/<id>.json` 一份檔案。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit",
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=out/extension.js --sourcemap",
+    "build:webview": "esbuild src/webview/main.ts --bundle --minify --format=iife --platform=browser --target=es2022 --outdir=media --sourcemap",
+    "build:tests": "tsc -p .",
+    "build": "npm run typecheck && npm run build:extension && npm run build:webview",
+    "vscode:prepublish": "npm run build",
+    "lint": "eslint .",
+    "test:unit": "npm run build:tests && mocha --ui tdd --timeout 10000 \"out/test/unit/**/*.test.js\"",
+    "test": "npm run build && npm run test:unit",
+    "check": "npm run lint && npm run test",
+    "package:vsix": "npm run check && vsce package --no-dependencies",
+    "release": "./scripts/publish.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.13.5",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.39.5",
+    "mocha": "^11.8.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}
