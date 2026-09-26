@@ -29,7 +29,6 @@ export type ClientMessage =
   | { type: 'renameCollection'; id: string }
   | { type: 'deleteCollection'; id: string }
   | { type: 'setCollectionFolder'; id: string }
-  | { type: 'setTitle'; title: string }
   | { type: 'createItem'; parentId?: string }
   | { type: 'updateItem'; id: string; patch: ItemPatch }
   | { type: 'moveItem'; id: string; parentId: string | null; index: number }
@@ -85,8 +84,6 @@ export function isClientMessage(value: unknown): value is ClientMessage {
     case 'deleteCategory':
     case 'deleteTag':
       return isStr(msg.id);
-    case 'setTitle':
-      return isStr(msg.title);
     case 'updateItem':
       return isStr(msg.id) && isItemPatch(msg.patch);
     case 'moveItem':

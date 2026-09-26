@@ -21,7 +21,6 @@ import {
   removeTag,
   renameCategory,
   renameCollection,
-  setCollectionTitle,
   updateTag,
   withItem,
 } from '../core/model';
@@ -238,9 +237,6 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         }
         return;
       }
-      case 'setTitle':
-        await this.commit(setCollectionTitle(collection, message.title, now));
-        return;
       case 'createItem': {
         const item = createItem(createId('todo'), collection, now, message.parentId ?? null);
         await this.commit(withItem(collection, item, now), item.id);
@@ -412,7 +408,8 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       <button type="button" id="col-delete" title="刪除 Collection">🗑</button>
       <button type="button" id="col-folder" title="設定保存位置">📁</button>
     </div>
-    <input id="title" type="text" maxlength="120" placeholder="大標題" title="大標題，預設為建立當天的日期">
+    <select id="filter" title="依狀態篩選左側列表"></select>
+    <input id="search" type="search" placeholder="搜尋標題或內容" title="關鍵字搜尋，標題或內容含有就算">
   </header>
   <main id="main">
     <section id="left">

@@ -1,3 +1,5 @@
+import type { FilterKey } from '../core/filter';
+import { FILTERS, filterItems, isFilterKey } from '../core/filter';
 import type { Collection, ItemPatch, Tag, TagColor, TodoItem } from '../core/model';
 import { STATUSES, TAG_COLORS, TITLE_MAX } from '../core/model';
 import type { ClientMessage, HostMessage } from '../shared/protocol';
@@ -16,7 +18,8 @@ const els = {
   colRename: $<HTMLButtonElement>('col-rename'),
   colDelete: $<HTMLButtonElement>('col-delete'),
   colFolder: $<HTMLButtonElement>('col-folder'),
-  title: $<HTMLInputElement>('title'),
+  filter: $<HTMLSelectElement>('filter'),
+  search: $<HTMLInputElement>('search'),
   main: $<HTMLElement>('main'),
   left: $<HTMLElement>('left'),
   right: $<HTMLElement>('right'),
@@ -69,6 +72,9 @@ let expanded = false;
 /** 分類與標籤共用一個管理區，兩個「管理」連結都開同一塊。 */
 let manageOpen = false;
 let tagsMenuOpen = false;
+/** 列表篩選只在畫面端：不經過主機、不存檔。 */
+let filter: FilterKey = 'all';
+let query = '';
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const post = (message: ClientMessage): void => vscode.postMessage(message);
@@ -187,15 +193,14 @@ function renderHeader(current: StateMessage): void {
   els.colDelete.title = els.colDelete.disabled ? '至少需保留一個 Collection' : '刪除 Collection';
   els.colFolder.title = `保存位置：${current.folder}${current.customFolder ? '' : '（預設）'}\n點一下更改`;
   els.colFolder.classList.toggle('custom', current.customFolder);
-  if (!isFocused(els.title)) {
-    els.title.value = current.collection.title;
-  }
 }
 
-/** items 的陣列順序就是畫面順序（頂層項目後面緊接子項目），這裡照著畫，不另外排序。 */
+/** items 的陣列順序就是畫面順序（頂層項目後面緊接子項目），這裡照著畫，不另外排序；篩選只決定哪些列要畫。 */
 function renderList(collection: Collection): void {
   const items = collection.items;
-  els.count.textContent = `${items.length} 項`;
+  const visible = filterItems(items, filter, query);
+  const filtering = filter !== 'all' || query.trim() !== '';
+  els.count.textContent = filtering ? `${visible.length} / ${items.length} 項` : `${items.length} 項`;
   if (!items.some((item) => item.id === selectedItemId)) {
     selectedItemId = null;
   }
@@ -203,7 +208,7 @@ function renderList(collection: Collection): void {
   const tagById = new Map(collection.tags.map((tag) => [tag.id, tag]));
   const parents = new Set(items.map((item) => item.parentId).filter((parentId): parentId is string => parentId !== null));
   els.items.replaceChildren(
-    ...items.map((item) => {
+    ...visible.map(({ item, context }) => {
       const line = el(
         'div',
         { className: 'line' },
@@ -218,6 +223,9 @@ function renderList(collection: Collection): void {
       }
       if (parents.has(item.id)) {
         classes.push('parent');
+      }
+      if (context) {
+        classes.push('context');
       }
       const row = el('li', { className: classes.join(' '), draggable: true }, line);
       const tags = item.tagIds.map((tagId) => tagById.get(tagId)).filter((tag): tag is Tag => !!tag);
@@ -239,6 +247,8 @@ function renderList(collection: Collection): void {
   );
   if (items.length === 0) {
     els.items.append(el('li', { className: 'placeholder', textContent: '還沒有 TODO，按上方「新增 TODO」開始。' }));
+  } else if (visible.length === 0) {
+    els.items.append(el('li', { className: 'placeholder', textContent: '沒有符合篩選條件的 TODO。' }));
   }
 }
 
@@ -732,11 +742,17 @@ els.colFolder.addEventListener('click', () => {
   }
 });
 
-els.title.addEventListener('input', () => debounce('title', () => post({ type: 'setTitle', title: els.title.value })));
-els.title.addEventListener('blur', () => {
-  flush('title');
-  if (state && els.title.value.trim() !== state.collection.title) {
-    post({ type: 'setTitle', title: els.title.value });
+els.filter.replaceChildren(...FILTERS.map((entry) => el('option', { value: entry.key, textContent: entry.label })));
+els.filter.addEventListener('change', () => {
+  filter = isFilterKey(els.filter.value) ? els.filter.value : 'all';
+  if (state) {
+    renderList(state.collection);
+  }
+});
+els.search.addEventListener('input', () => {
+  query = els.search.value;
+  if (state) {
+    renderList(state.collection);
   }
 });
 

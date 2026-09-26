@@ -24,7 +24,6 @@ suite('isClientMessage', () => {
       { type: 'createCollection' },
       { type: 'createItem' },
       { type: 'selectCollection', id: 'x' },
-      { type: 'setTitle', title: '' },
       { type: 'updateItem', id: 'x', patch: {} },
       { type: 'updateItem', id: 'x', patch: { title: 'a', content: 'b', status: '已完成', categoryId: 'c', tagIds: ['t'], createdAt: 'd' } },
       { type: 'createCategory', name: 'x' },

@@ -158,23 +158,19 @@ button.link.active {
   box-shadow: inset 0 0 0 1px var(--focus);
 }
 
-#title {
+#filter {
+  flex: none;
+  max-width: 220px;
+}
+
+#search {
   flex: 1;
-  min-width: 0;
-  font-size: 1.25em;
-  font-weight: 600;
-  background: transparent;
-  border-color: transparent;
-}
-
-#title:hover,
-#title:focus {
+  min-width: 80px;
+  padding: 4px 6px;
   background: var(--input-bg);
-  border-color: var(--input-border);
-}
-
-#title:focus {
-  border-color: var(--focus);
+  border: 1px solid var(--input-border);
+  border-radius: 3px;
+  outline: none;
 }
 
 /* ---------- 兩欄 ---------- */
@@ -268,6 +264,11 @@ body.expanded #splitter {
   background: var(--selected);
   color: var(--selected-fg);
   border-left-color: var(--focus);
+}
+
+/* 只因為子項目符合篩選才留下的父項目：淡化，表示它本身不在結果裡。 */
+.item.context .line {
+  opacity: 0.5;
 }
 
 .item .line {

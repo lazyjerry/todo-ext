@@ -51,7 +51,7 @@ export interface Collection {
   version: typeof COLLECTION_VERSION;
   id: string;
   name: string;
-  /** 大標題，預設建立當天的日期。 */
+  /** 建立當天的日期。畫面已不顯示，欄位留著讓既有檔案照舊。 */
   title: string;
   categories: Category[];
   tags: Tag[];
@@ -111,10 +111,6 @@ export function renameCollection(collection: Collection, name: string, now: Date
     return undefined;
   }
   return touch({ ...collection, name: clean }, now);
-}
-
-export function setCollectionTitle(collection: Collection, title: string, now: Date): Collection {
-  return touch({ ...collection, title: cleanName(title, TITLE_MAX) }, now);
 }
 
 // ---------- Item ----------
