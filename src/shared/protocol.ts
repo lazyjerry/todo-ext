@@ -1,5 +1,7 @@
 import type { Collection, ItemPatch, TagColor } from '../core/model';
 import { isStatus, isTagColor } from '../core/model';
+import type { ViewState } from '../core/uiState';
+import { isViewState } from '../core/uiState';
 
 export interface CollectionSummary {
   id: string;
@@ -19,11 +21,15 @@ export type HostMessage =
       customFolder: boolean;
       /** 剛新增的項目：webview 要選到它並把游標放到標題。 */
       focusItemId?: string;
+      /** 開面板或按刷新時帶上：webview 要切到這個畫面狀態。平常的狀態更新不帶，畫面照舊。 */
+      view?: ViewState;
     }
   | { type: 'empty'; reason: string };
 
 export type ClientMessage =
   | { type: 'ready' }
+  | { type: 'refresh' }
+  | { type: 'setView'; view: ViewState }
   | { type: 'selectCollection'; id: string }
   | { type: 'createCollection' }
   | { type: 'renameCollection'; id: string }
@@ -72,8 +78,11 @@ export function isClientMessage(value: unknown): value is ClientMessage {
   const msg = value as Record<string, unknown>;
   switch (msg.type) {
     case 'ready':
+    case 'refresh':
     case 'createCollection':
       return true;
+    case 'setView':
+      return isViewState(msg.view);
     case 'createItem':
       return msg.parentId === undefined || isStr(msg.parentId);
     case 'selectCollection':

@@ -173,6 +173,11 @@ button.link.active {
   outline: none;
 }
 
+#refresh {
+  flex: none;
+  padding: 3px 7px;
+}
+
 /* ---------- 兩欄 ---------- */
 
 #main {

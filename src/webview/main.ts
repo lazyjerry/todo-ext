@@ -2,6 +2,7 @@ import type { FilterKey } from '../core/filter';
 import { FILTERS, filterItems, isFilterKey } from '../core/filter';
 import type { Collection, ItemPatch, Tag, TagColor, TodoItem } from '../core/model';
 import { STATUSES, TAG_COLORS, TITLE_MAX } from '../core/model';
+import type { ViewState } from '../core/uiState';
 import type { ClientMessage, HostMessage } from '../shared/protocol';
 import { clampRatio } from '../shared/protocol';
 
@@ -20,6 +21,7 @@ const els = {
   colFolder: $<HTMLButtonElement>('col-folder'),
   filter: $<HTMLSelectElement>('filter'),
   search: $<HTMLInputElement>('search'),
+  refresh: $<HTMLButtonElement>('refresh'),
   main: $<HTMLElement>('main'),
   left: $<HTMLElement>('left'),
   right: $<HTMLElement>('right'),
@@ -72,7 +74,7 @@ let expanded = false;
 /** 分類與標籤共用一個管理區，兩個「管理」連結都開同一塊。 */
 let manageOpen = false;
 let tagsMenuOpen = false;
-/** 列表篩選只在畫面端：不經過主機、不存檔。 */
+/** 列表篩選在畫面端做、不經主機；跟選到的項目、展開狀態一起由 syncView 回報給主機記住。 */
 let filter: FilterKey = 'all';
 let query = '';
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -156,6 +158,9 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     return;
   }
   state = message;
+  if (message.view) {
+    applyView(message.view);
+  }
   if (message.focusItemId) {
     selectedItemId = message.focusItemId;
     manageOpen = false;
@@ -164,8 +169,32 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   render();
   if (message.focusItemId) {
     els.itemTitle.focus();
+    syncView();
   }
 });
+
+/**
+ * 主機要我們切到最後一次變更的畫面狀態（開面板、按刷新時）。
+ * 搜尋框正在打字就以框裡的為準、不蓋掉，其他欄位沒有半打的內容可丟。
+ */
+function applyView(view: ViewState): void {
+  selectedItemId = view.itemId;
+  filter = view.filter;
+  expanded = view.expanded;
+  els.filter.value = filter;
+  if (isFocused(els.search)) {
+    query = els.search.value;
+  } else {
+    query = view.query;
+    els.search.value = query;
+  }
+  closeTagsMenu();
+}
+
+/** 畫面狀態一動就告訴主機，主機寫進檔案讓其他視窗切得過來；主機不會回傳狀態，畫面不重繪。 */
+function syncView(): void {
+  post({ type: 'setView', view: { itemId: selectedItemId, filter, query, expanded } });
+}
 
 function render(): void {
   if (!state) {
@@ -239,6 +268,7 @@ function renderList(collection: Collection): void {
         manageOpen = false;
         closeTagsMenu();
         render();
+        syncView();
       });
       row.addEventListener('dragstart', (event) => startDrag(item.id, event));
       row.addEventListener('dragend', finishDrag);
@@ -748,13 +778,16 @@ els.filter.addEventListener('change', () => {
   if (state) {
     renderList(state.collection);
   }
+  syncView();
 });
 els.search.addEventListener('input', () => {
   query = els.search.value;
   if (state) {
     renderList(state.collection);
   }
+  debounce('view', syncView);
 });
+els.refresh.addEventListener('click', () => post({ type: 'refresh' }));
 
 els.itemAdd.addEventListener('click', () => post({ type: 'createItem' }));
 els.childAdd.addEventListener('click', () => {
@@ -771,6 +804,7 @@ els.expand.addEventListener('click', () => {
   expanded = !expanded;
   closeTagsMenu();
   render();
+  syncView();
 });
 
 function patchCurrent(patch: ItemPatch): void {

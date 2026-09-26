@@ -25,7 +25,9 @@ import {
   withItem,
 } from '../core/model';
 import type { CollectionFolders } from '../core/store';
-import { CollectionStore } from '../core/store';
+import { CollectionStore, StaleError, UiStateStore } from '../core/store';
+import type { UiState } from '../core/uiState';
+import { DEFAULT_VIEW, viewOf } from '../core/uiState';
 import type { ClientMessage, HostMessage } from '../shared/protocol';
 import { clampRatio, isClientMessage } from '../shared/protocol';
 
@@ -33,6 +35,7 @@ const SELECTED_KEY = 'todooo.selectedCollection';
 const RATIO_KEY = 'todooo.ratio';
 const DATA_FOLDER_SETTING = 'todooo.dataFolder';
 const FOLDERS_SETTING = 'todooo.collectionFolders';
+const UI_STATE_FILE = 'ui-state.json';
 
 /**
  * 底部 Panel 裡的 view。收起再打開時 webview 保留（retainContextWhenHidden），
@@ -43,18 +46,26 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private view: vscode.WebviewView | undefined;
   private store: CollectionStore;
+  private uiStore: UiStateStore;
   private collections: Collection[] = [];
+  /** 畫面狀態的記憶體副本；開面板、按刷新時從 `ui-state.json` 讀進來，使用者一動就寫回去。 */
+  private ui: UiState;
   private readonly disposables: vscode.Disposable[] = [];
   /** 序列化所有會改資料的操作，避免兩則訊息交錯寫同一份檔案。 */
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.store = new CollectionStore(collectionsDir(), collectionFolders());
+    this.uiStore = new UiStateStore(path.join(dataDir(), UI_STATE_FILE));
+    // 0.3.x 之前選到的 Collection 記在 globalState；第一次還沒有畫面狀態檔時拿它當起點。
+    const legacy = this.context.globalState.get<unknown>(SELECTED_KEY);
+    this.ui = { ...DEFAULT_VIEW, collectionId: typeof legacy === 'string' ? legacy : null, updatedAt: '' };
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration(DATA_FOLDER_SETTING) || event.affectsConfiguration(FOLDERS_SETTING)) {
           this.store = new CollectionStore(collectionsDir(), collectionFolders());
-          this.enqueue(() => this.reload());
+          this.uiStore = new UiStateStore(path.join(dataDir(), UI_STATE_FILE));
+          this.enqueue(() => this.reload({ view: true }));
         }
       }),
     );
@@ -72,10 +83,10 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.enqueue(() => this.handle(message));
       }
     });
-    // 面板收起再打開時重讀磁碟：別的視窗可能改過。
+    // 面板收起再打開時重讀磁碟與畫面狀態：別的視窗可能改過，要切到最後一次變更的狀態。
     webviewView.onDidChangeVisibility(() => {
       if (webviewView.visible) {
-        this.enqueue(() => this.reload());
+        this.enqueue(() => this.reload({ view: true }));
       }
     });
     webviewView.onDidDispose(() => {
@@ -92,14 +103,20 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
   private enqueue(task: () => Promise<void>): void {
-    this.queue = this.queue.then(task).catch((error: unknown) => {
-      void vscode.window.showErrorMessage(`todooo：${error instanceof Error ? error.message : String(error)}`);
-    });
-  }
-
-  private get selectedId(): string | undefined {
-    const stored = this.context.globalState.get<unknown>(SELECTED_KEY);
-    return typeof stored === 'string' ? stored : undefined;
+    this.queue = this.queue
+      .then(task)
+      .catch(async (error: unknown) => {
+        if (!(error instanceof StaleError)) {
+          reportError(error);
+          return;
+        }
+        // 別的視窗改過：這次變更不寫，提示後重讀最新內容。焦點與正在打的字都不動，
+        // 下一次送出（下一個字、失焦）就以新版本為基準，使用者不必重做。
+        const name = this.collections.find((entry) => entry.id === error.id)?.name ?? error.id;
+        void vscode.window.showWarningMessage(`todooo：「${name}」${error.message}，這次變更未保存；已重新讀取最新內容。`);
+        await this.reload();
+      })
+      .catch(reportError);
   }
 
   private get ratio(): number {
@@ -107,11 +124,14 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 
   private get selected(): Collection | undefined {
-    return this.collections.find((collection) => collection.id === this.selectedId) ?? this.collections[0];
+    return this.collections.find((collection) => collection.id === this.ui.collectionId) ?? this.collections[0];
   }
 
-  /** 重讀全部 Collection；一份都沒有就建預設的那份，面板永遠至少有一個 Collection。 */
-  private async reload(focusItemId?: string): Promise<void> {
+  /**
+   * 重讀全部 Collection；一份都沒有就建預設的那份，面板永遠至少有一個 Collection。
+   * `view` 為 true 時連畫面狀態檔一起讀，並要 webview 切到那個狀態（開面板、按刷新時）。
+   */
+  private async reload(options: { view?: boolean } = {}): Promise<void> {
     const { collections, problems } = await this.store.list();
     this.collections = collections;
     for (const problem of problems) {
@@ -122,14 +142,20 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       await this.store.save(created);
       this.collections = [created];
     }
-    const selected = this.selected!;
-    if (selected.id !== this.selectedId) {
-      await this.context.globalState.update(SELECTED_KEY, selected.id);
+    if (options.view) {
+      const saved = await this.uiStore.read();
+      if (saved) {
+        this.ui = saved;
+      }
     }
-    this.postState(focusItemId);
+    const selected = this.selected!;
+    if (selected.id !== this.ui.collectionId) {
+      await this.saveUi({ collectionId: selected.id });
+    }
+    this.postState(undefined, options.view);
   }
 
-  private postState(focusItemId?: string): void {
+  private postState(focusItemId?: string, withView = false): void {
     const collection = this.selected;
     if (!collection) {
       this.post({ type: 'empty', reason: '沒有可用的 Collection' });
@@ -143,6 +169,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       folder: collapseHome(this.store.folderFor(collection.id)),
       customFolder: this.store.hasCustomFolder(collection.id),
       focusItemId,
+      view: withView ? viewOf(this.ui) : undefined,
     });
   }
 
@@ -150,8 +177,15 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     void this.view?.webview.postMessage(message);
   }
 
-  /** 把改好的 Collection 寫回磁碟並更新記憶體中的那份，再把整個狀態送給 webview。 */
+  /** 畫面狀態一動就整份寫回檔案，讓其他視窗下次開面板或按刷新時切得過來。 */
+  private async saveUi(patch: Partial<UiState>): Promise<void> {
+    this.ui = { ...this.ui, ...patch, updatedAt: new Date().toISOString() };
+    await this.uiStore.write(this.ui);
+  }
+
+  /** 把改好的 Collection 寫回磁碟並更新記憶體中的那份，再把整個狀態送給 webview。寫之前先比版本。 */
   private async commit(collection: Collection, focusItemId?: string): Promise<void> {
+    await this.store.assertFresh(collection.id);
     await this.store.save(collection);
     const index = this.collections.findIndex((entry) => entry.id === collection.id);
     if (index < 0) {
@@ -163,14 +197,19 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     this.postState(focusItemId);
   }
 
+  /** 換 Collection 時選到的項目一起清掉，跟 webview 端的行為一致。 */
   private async select(id: string): Promise<void> {
-    await this.context.globalState.update(SELECTED_KEY, id);
+    await this.saveUi({ collectionId: id, itemId: null });
     this.postState();
   }
 
   private async handle(message: ClientMessage): Promise<void> {
-    if (message.type === 'ready') {
-      await this.reload();
+    if (message.type === 'ready' || message.type === 'refresh') {
+      await this.reload({ view: true });
+      return;
+    }
+    if (message.type === 'setView') {
+      await this.saveUi(message.view);
       return;
     }
     const collection = this.selected;
@@ -225,6 +264,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         if (!confirmed) {
           return;
         }
+        await this.store.assertFresh(target.id);
         await this.store.remove(target.id);
         this.collections = this.collections.filter((entry) => entry.id !== target.id);
         await this.select(this.collections[0].id);
@@ -373,7 +413,8 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const folders = await this.store.relocate(target, folder);
     this.store = new CollectionStore(defaultDir, folders);
     await vscode.workspace.getConfiguration().update(FOLDERS_SETTING, storedFolders(folders), vscode.ConfigurationTarget.Global);
-    this.postState();
+    // 新 store 還沒記任何版本號，重讀一次讓後續寫入有得比。
+    await this.reload();
   }
 
   private getHtml(webview: vscode.Webview): string {
@@ -410,6 +451,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     </div>
     <select id="filter" title="依狀態篩選左側列表"></select>
     <input id="search" type="search" placeholder="搜尋標題或內容" title="關鍵字搜尋，標題或內容含有就算">
+    <button type="button" id="refresh" title="刷新：重新讀取磁碟上的 Collection 與最後一次變更的畫面狀態">↻</button>
   </header>
   <main id="main">
     <section id="left">
@@ -477,10 +519,18 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   }
 }
 
-function collectionsDir(): string {
+/** 資料夾根：底下放 `collections/` 與 `ui-state.json`。 */
+function dataDir(): string {
   const configured = vscode.workspace.getConfiguration().get<string>(DATA_FOLDER_SETTING, '').trim();
-  const base = configured ? expandHome(configured) : path.join(os.homedir(), '.todooo');
-  return path.join(base, 'collections');
+  return configured ? expandHome(configured) : path.join(os.homedir(), '.todooo');
+}
+
+function collectionsDir(): string {
+  return path.join(dataDir(), 'collections');
+}
+
+function reportError(error: unknown): void {
+  void vscode.window.showErrorMessage(`todooo：${error instanceof Error ? error.message : String(error)}`);
 }
 
 function expandHome(value: string): string {

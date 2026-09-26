@@ -36,9 +36,26 @@ suite('isClientMessage', () => {
       { type: 'moveItem', id: 'x', parentId: null, index: 0 },
       { type: 'moveItem', id: 'x', parentId: 'p', index: 3 },
       { type: 'setCollectionFolder', id: 'c' },
+      { type: 'refresh' },
+      { type: 'setView', view: { itemId: null, filter: 'all', query: '', expanded: false } },
+      { type: 'setView', view: { itemId: 'todo_1', filter: 'open', query: 'x', expanded: true } },
     ];
     for (const message of ok) {
       assert.equal(isClientMessage(message), true, JSON.stringify(message));
+    }
+  });
+
+  test('setView 的 view 逐欄檢查', () => {
+    const bad: unknown[] = [
+      { type: 'setView' },
+      { type: 'setView', view: null },
+      { type: 'setView', view: { itemId: 1, filter: 'all', query: '', expanded: false } },
+      { type: 'setView', view: { itemId: null, filter: 'nope', query: '', expanded: false } },
+      { type: 'setView', view: { itemId: null, filter: 'all', query: 1, expanded: false } },
+      { type: 'setView', view: { itemId: null, filter: 'all', query: '', expanded: 'no' } },
+    ];
+    for (const message of bad) {
+      assert.equal(isClientMessage(message), false, JSON.stringify(message));
     }
   });
 

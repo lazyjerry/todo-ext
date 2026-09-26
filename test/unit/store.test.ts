@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { createCollection } from '../../src/core/model';
-import { CollectionStore } from '../../src/core/store';
+import { CollectionStore, StaleError, rawVersion } from '../../src/core/store';
 
 const T0 = new Date('2026-09-26T01:02:03.000Z');
 
@@ -116,5 +116,50 @@ suite('CollectionStore', () => {
     assert.deepEqual((await store.list()).collections, []);
     await assert.rejects(store.remove('../etc/passwd'));
     await assert.rejects(store.save({ ...createCollection('col_0000000000000001', 'cat_0000000000000001', 'x', T0), id: 'x/y' }));
+  });
+
+  test('版本號：save 與 list 都記下 updatedAt；別的視窗改過或刪掉就 assertFresh 拒絕，重讀後放行', async () => {
+    const store = new CollectionStore(dir);
+    const id = 'col_0000000000000001';
+    const collection = createCollection(id, 'cat_0000000000000001', 'x', T0);
+    assert.equal(store.version(id), undefined);
+    await store.assertFresh(id);
+    await store.save(collection);
+    assert.equal(store.version(id), collection.updatedAt);
+    await store.assertFresh(id);
+
+    // 另一個視窗寫入：updatedAt 變了。
+    const other = new CollectionStore(dir);
+    await other.save({ ...collection, updatedAt: '2026-09-26T02:00:00.000Z' });
+    await assert.rejects(store.assertFresh(id), (error: unknown) => error instanceof StaleError && error.id === id && /更新/.test(error.message));
+    await store.list();
+    assert.equal(store.version(id), '2026-09-26T02:00:00.000Z');
+    await store.assertFresh(id);
+
+    await fs.rm(store.fileFor(id));
+    await assert.rejects(store.assertFresh(id), (error: unknown) => error instanceof StaleError && /不存在/.test(error.message));
+  });
+
+  test('版本號比的是檔案裡的原字串：手寫的非標準時間或缺 updatedAt 也不會被自己鎖住', async () => {
+    const store = new CollectionStore(dir);
+    const id = 'col_0000000000000001';
+    await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify({ id, name: 'hand', updatedAt: '2026-09-26T01:02:03Z' }), 'utf8');
+    await fs.writeFile(path.join(dir, 'col_0000000000000002.json'), JSON.stringify({ id: 'col_0000000000000002', name: 'no time' }), 'utf8');
+    await store.list();
+    assert.equal(store.version(id), '2026-09-26T01:02:03Z');
+    assert.equal(store.version('col_0000000000000002'), '');
+    await store.assertFresh(id);
+    await store.assertFresh('col_0000000000000002');
+    assert.equal(rawVersion({ updatedAt: 5 }), '');
+    assert.equal(rawVersion(null), '');
+  });
+
+  test('relocate 前先比版本：別的視窗改過就不搬', async () => {
+    const store = new CollectionStore(dir);
+    const collection = createCollection('col_0000000000000001', 'cat_0000000000000001', 'x', T0);
+    await store.save(collection);
+    await new CollectionStore(dir).save({ ...collection, name: 'changed', updatedAt: '2026-09-26T02:00:00.000Z' });
+    await assert.rejects(store.relocate(collection, path.join(dir, 'custom')), StaleError);
+    assert.equal((await new CollectionStore(dir).list()).collections[0].name, 'changed');
   });
 });
