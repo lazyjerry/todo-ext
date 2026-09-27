@@ -2,7 +2,7 @@
   "name": "todooo",
   "displayName": "todooo",
   "description": "全域、跨工作區的 TODO List。多個 Collection 各存成一份 JSON，左列表右細節的兩欄面板，狀態、分類與 Notion 風格的自訂標籤。",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "workjerry",
   "license": "Apache-2.0",
   "repository": {
