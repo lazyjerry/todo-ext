@@ -7,10 +7,10 @@ import type { Status, TodoItem } from './model';
 
 export const FILTERS = [
   { key: 'all', label: '全部', statuses: null },
-  { key: 'open', label: '僅顯示未完成', statuses: ['未完成'] },
-  { key: 'closed', label: '結束（已完成、失敗、擱置）', statuses: ['已完成', '失敗', '擱置'] },
+  { key: 'open', label: '未完成', statuses: ['未完成', '待測試', '待回覆'] },
+  { key: 'closed', label: '結束', statuses: ['已完成', '失敗', '擱置'] },
   { key: 'done', label: '已完成', statuses: ['已完成'] },
-  { key: 'other', label: '其他（待測試、待回覆）', statuses: ['待測試', '待回覆'] },
+  { key: 'other', label: '其他', statuses: ['待測試', '待回覆'] },
 ] as const satisfies readonly { key: string; label: string; statuses: readonly Status[] | null }[];
 
 export type FilterKey = (typeof FILTERS)[number]['key'];

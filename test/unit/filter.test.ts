@@ -27,7 +27,7 @@ suite('filterItems', () => {
   test('依狀態篩選', () => {
     const items = STATUSES.map((status, index) => item(`t${index}`, status));
     assert.deepEqual(ids(filterItems(items, 'all', '')), ['t0', 't1', 't2', 't3', 't4', 't5']);
-    assert.deepEqual(ids(filterItems(items, 'open', '')), ['t0']);
+    assert.deepEqual(ids(filterItems(items, 'open', '')), ['t0', 't2', 't3']);
     assert.deepEqual(ids(filterItems(items, 'closed', '')), ['t1', 't4', 't5']);
     assert.deepEqual(ids(filterItems(items, 'done', '')), ['t1']);
     assert.deepEqual(ids(filterItems(items, 'other', '')), ['t2', 't3']);
