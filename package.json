@@ -2,7 +2,7 @@
   "name": "todooo",
   "displayName": "todooo",
   "description": "全域、跨工作區的 TODO List。多個 Collection 各存成一份 JSON，左列表右細節的兩欄面板，狀態、分類與 Notion 風格的自訂標籤。",
-  "version": "0.4.1",
+  "version": "0.5.1",
   "publisher": "workjerry",
   "license": "Apache-2.0",
   "repository": {
@@ -82,7 +82,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "markdownDescription": "個別 Collection 的保存資料夾：鍵是 Collection id、值是資料夾路徑（可用 `~` 開頭），該 Collection 存成 `<資料夾>/<id>.json`。平常用面板上的 📁 按鈕設定即可；換到另一台機器時，把同一組設定填進使用者設定就能接回同一份檔案。只能在使用者設定層級設定。"
+          "markdownDescription": "個別 Collection 的保存資料夾：鍵是 Collection id、值是資料夾路徑（可用 `~` 開頭），該 Collection 存成 `<資料夾>/<id>.json`。設定裡出現的資料夾是共用資料夾，裡面其他沒列在這裡的 `<id>.json` 也會一併顯示。平常用面板上的 📁 按鈕設定即可；換到另一台機器時，把同一組設定填進使用者設定就能接回同一份檔案。只能在使用者設定層級設定。"
         }
       }
     }

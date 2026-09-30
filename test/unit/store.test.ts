@@ -162,4 +162,57 @@ suite('CollectionStore', () => {
     await assert.rejects(store.relocate(collection, path.join(dir, 'custom')), StaleError);
     assert.equal((await new CollectionStore(dir).list()).collections[0].name, 'changed');
   });
+
+  test('設定裡的資料夾是共用資料夾：沒點名的 Collection 一併讀進來、寫回原資料夾；預設資料夾已有同 id 就略過並回報', async () => {
+    const shared = path.join(dir, 'shared');
+    const other = new CollectionStore(dir, { col_0000000000000002: shared, col_0000000000000003: shared });
+    await other.save(createCollection('col_0000000000000002', 'cat_0000000000000002', '別處建的', T0));
+    await other.save(createCollection('col_0000000000000003', 'cat_0000000000000003', '撞 id 的', T0));
+    const store = new CollectionStore(dir, { col_0000000000000001: shared });
+    await store.save(createCollection('col_0000000000000001', 'cat_0000000000000001', '點名的', T0));
+    await store.save(createCollection('col_0000000000000003', 'cat_0000000000000003', '預設那份', T0));
+
+    const { collections, problems } = await store.list();
+    assert.deepEqual(
+      collections.map((collection) => collection.name).sort(),
+      ['別處建的', '點名的', '預設那份'].sort(),
+    );
+    assert.deepEqual(
+      problems.map((problem) => problem.file),
+      [path.join(shared, 'col_0000000000000003.json')],
+    );
+    assert.equal(store.hasCustomFolder('col_0000000000000002'), true);
+    assert.equal(store.fileFor('col_0000000000000002'), path.join(shared, 'col_0000000000000002.json'));
+    assert.equal(store.fileFor('col_0000000000000003'), path.join(dir, 'col_0000000000000003.json'));
+  });
+
+  test('relocate 回傳的對照表帶上共用資料夾裡找到的 Collection：點名那份搬走後其他的不會消失', async () => {
+    const shared = path.join(dir, 'shared');
+    await new CollectionStore(dir, { col_0000000000000002: shared }).save(createCollection('col_0000000000000002', 'cat_0000000000000002', '共用的', T0));
+    const store = new CollectionStore(dir, { col_0000000000000001: shared });
+    const named = createCollection('col_0000000000000001', 'cat_0000000000000001', '點名的', T0);
+    await store.save(named);
+    await store.list();
+
+    const folders = await store.relocate(named, undefined);
+    assert.deepEqual(folders, { col_0000000000000002: shared });
+    assert.deepEqual(
+      (await new CollectionStore(dir, folders).list()).collections.map((collection) => collection.name).sort(),
+      ['共用的', '點名的'].sort(),
+    );
+  });
+
+  test('寫設定失敗時的回滾：用搬檔後的對照表建新 store，把檔案搬回原本的共用資料夾', async () => {
+    const shared = path.join(dir, 'shared');
+    await new CollectionStore(dir, { col_0000000000000002: shared }).save(createCollection('col_0000000000000002', 'cat_0000000000000002', '共用的', T0));
+    const store = new CollectionStore(dir, { col_0000000000000001: shared });
+    const found = (await store.list()).collections.find((collection) => collection.id === 'col_0000000000000002')!;
+    const previous = store.folderFor(found.id);
+    const elsewhere = path.join(dir, 'elsewhere');
+
+    const folders = await store.relocate(found, elsewhere);
+    await new CollectionStore(dir, folders).relocate(found, previous);
+    await fs.access(path.join(shared, 'col_0000000000000002.json'));
+    await assert.rejects(fs.access(path.join(elsewhere, 'col_0000000000000002.json')));
+  });
 });

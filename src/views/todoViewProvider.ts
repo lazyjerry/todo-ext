@@ -410,9 +410,16 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         folder = undefined;
       }
     }
+    const previous = this.store.hasCustomFolder(target.id) ? this.store.folderFor(target.id) : undefined;
     const folders = await this.store.relocate(target, folder);
+    try {
+      await vscode.workspace.getConfiguration().update(FOLDERS_SETTING, storedFolders(folders), vscode.ConfigurationTarget.Global);
+    } catch (error) {
+      // 設定寫不進去（例如使用者設定檔有未存的變更）就把檔案搬回原處：設定沒指向新位置，留在那裡這份 Collection 會從面板消失。
+      await new CollectionStore(defaultDir, folders).relocate(target, previous);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}（檔案已搬回原處）`);
+    }
     this.store = new CollectionStore(defaultDir, folders);
-    await vscode.workspace.getConfiguration().update(FOLDERS_SETTING, storedFolders(folders), vscode.ConfigurationTarget.Global);
     // 新 store 還沒記任何版本號，重讀一次讓後續寫入有得比。
     await this.reload();
   }

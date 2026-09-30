@@ -53,10 +53,13 @@ async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
 /**
  * 一個 Collection 一份 `<資料夾>/<id>.json`。預設都在 `dir`；`folders` 列出的 Collection 改放各自的資料夾。
  * 每份的版本號（檔案裡 `updatedAt` 的原字串）在讀與寫時記下來，寫入前拿來跟磁碟比。
+ * `folders` 裡出現的資料夾是共用資料夾：裡面沒被點名的 Collection 也一併讀進來，寫回原資料夾。
  */
 export class CollectionStore {
   /** 上次讀或寫時每個 Collection 的版本號。 */
   private readonly versions = new Map<string, string>();
+  /** 上次 `list()` 在共用資料夾裡找到、`folders` 沒點名的 Collection：id → 資料夾。 */
+  private readonly discovered = new Map<string, string>();
 
   constructor(
     readonly dir: string,
@@ -93,10 +96,15 @@ export class CollectionStore {
 
   /** 這個 Collection 目前該放在哪個資料夾。 */
   folderFor(id: string): string {
-    return this.hasCustomFolder(id) ? this.folders[id] : this.dir;
+    return this.hasConfiguredFolder(id) ? this.folders[id] : (this.discovered.get(id) ?? this.dir);
   }
 
   hasCustomFolder(id: string): boolean {
+    return this.hasConfiguredFolder(id) || this.discovered.has(id);
+  }
+
+  /** `folders` 有點名這個 id。 */
+  private hasConfiguredFolder(id: string): boolean {
     return Object.prototype.hasOwnProperty.call(this.folders, id) && typeof this.folders[id] === 'string' && this.folders[id] !== '';
   }
 
@@ -119,6 +127,7 @@ export class CollectionStore {
   async list(): Promise<{ collections: Collection[]; problems: StoreProblem[] }> {
     await fs.mkdir(this.dir, { recursive: true });
     this.versions.clear();
+    this.discovered.clear();
     const collections: Collection[] = [];
     const problems: StoreProblem[] = [];
     for (const name of await fs.readdir(this.dir)) {
@@ -144,23 +153,67 @@ export class CollectionStore {
       }
       await this.readInto(file, id, collections, problems);
     }
+    await this.readShared(collections, problems);
     collections.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant') || a.createdAt.localeCompare(b.createdAt));
     return { collections, problems };
   }
 
-  private async readInto(file: string, id: string, collections: Collection[], problems: StoreProblem[]): Promise<void> {
+  private async readInto(file: string, id: string, collections: Collection[], problems: StoreProblem[]): Promise<boolean> {
     try {
       const json: unknown = JSON.parse(await fs.readFile(file, 'utf8'));
       const parsed = parseCollection(json, createId);
       if (!parsed) {
         problems.push({ file, reason: '缺少 id 或 name' });
-        return;
+        return false;
       }
       // 檔名才是身分；內容的 id 對不上時以檔名為準，避免複製檔案後兩份互相覆寫。
       collections.push(parsed.id === id ? parsed : { ...parsed, id });
       this.versions.set(id, rawVersion(json));
+      return true;
     } catch (error) {
       problems.push({ file, reason: error instanceof Error ? error.message : String(error) });
+      return false;
+    }
+  }
+
+  /**
+   * 掃 `folders` 裡出現的每個資料夾，讀進沒被點名的 Collection，記在 `discovered`，之後寫回同一個資料夾。
+   * 點名過的 id 各讀各的；預設資料夾已經有同 id 的就略過並回報，不讓兩份互相覆寫。
+   */
+  private async readShared(collections: Collection[], problems: StoreProblem[]): Promise<void> {
+    const shared = new Set(
+      Object.keys(this.folders)
+        .filter((id) => isSafeIdSegment(id) && this.hasConfiguredFolder(id))
+        .map((id) => path.resolve(this.folders[id])),
+    );
+    for (const folder of shared) {
+      let names: string[];
+      try {
+        names = await fs.readdir(folder);
+      } catch (error) {
+        // 資料夾不存在時，點名的那份已經回報過「找不到檔案」。
+        if (!isEnoent(error)) {
+          problems.push({ file: folder, reason: error instanceof Error ? error.message : String(error) });
+        }
+        continue;
+      }
+      for (const name of names) {
+        if (!name.endsWith('.json')) {
+          continue;
+        }
+        const id = name.slice(0, -'.json'.length);
+        if (!isSafeIdSegment(id) || this.hasCustomFolder(id)) {
+          continue;
+        }
+        const file = path.join(folder, name);
+        if (collections.some((collection) => collection.id === id)) {
+          problems.push({ file, reason: '預設資料夾已有同 id 的 Collection，這份不讀；要改用這份請先移走預設資料夾那份' });
+          continue;
+        }
+        if (await this.readInto(file, id, collections, problems)) {
+          this.discovered.set(id, folder);
+        }
+      }
     }
   }
 
@@ -184,7 +237,8 @@ export class CollectionStore {
   async relocate(collection: Collection, folder: string | undefined): Promise<Record<string, string>> {
     await this.assertFresh(collection.id);
     const from = this.fileFor(collection.id);
-    const next: Record<string, string> = { ...this.folders };
+    // 共用資料夾裡找到的也寫進對照表：點名的那份搬走後，資料夾仍留在設定裡，其他 Collection 不會跟著消失。
+    const next: Record<string, string> = { ...Object.fromEntries(this.discovered), ...this.folders };
     if (folder === undefined) {
       delete next[collection.id];
     } else {
