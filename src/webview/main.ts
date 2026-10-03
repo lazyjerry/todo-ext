@@ -52,6 +52,7 @@ const els = {
   itemCreated: $<HTMLInputElement>('item-created'),
   itemCompleted: $<HTMLElement>('item-completed'),
   itemContent: $<HTMLTextAreaElement>('item-content'),
+  tooltip: $<HTMLElement>('tooltip'),
 };
 
 const STATUS_LABEL: Record<string, string> = {};
@@ -239,17 +240,19 @@ function renderList(collection: Collection): void {
   const categoryName = new Map(collection.categories.map((category) => [category.id, category.name]));
   const tagById = new Map(collection.tags.map((tag) => [tag.id, tag]));
   const parents = new Set(items.map((item) => item.parentId).filter((parentId): parentId is string => parentId !== null));
+  // 列整批換新，滑過中的那一列已經不在畫面上，提示跟著收掉。
+  hideTip();
   els.items.replaceChildren(
     ...visible.map(({ item, context }) => {
       // 標題截斷時滑過看完整標題；結論只在結束類狀態且有填時出現，滑過看內容；分類跟標籤同樣式。
-      const line = el(
-        'div',
-        { className: 'line' },
-        statusPill(item.status),
-        el('span', { className: 'item-title', textContent: item.title || '（無標題）', title: item.title }),
-      );
+      // 滑過的內容放 data-tip，由下方「滑過提示」顯示。
+      const title = el('span', { className: 'item-title', textContent: item.title || '（無標題）' });
+      title.dataset.tip = item.title;
+      const line = el('div', { className: 'line' }, statusPill(item.status), title);
       if (CLOSED_STATUSES.has(item.status) && item.conclusion) {
-        line.append(el('span', { className: 'tag c-blue conclusion', textContent: '結論', title: item.conclusion }));
+        const conclusion = el('span', { className: 'tag c-blue conclusion', textContent: '結論' });
+        conclusion.dataset.tip = item.conclusion;
+        line.append(conclusion);
       }
       const category = categoryName.get(item.categoryId);
       if (category) {
@@ -594,6 +597,7 @@ let renderAfterDrag = false;
 
 function startDrag(id: string, event: DragEvent): void {
   dragId = id;
+  hideTip();
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', id);
@@ -733,6 +737,52 @@ els.items.addEventListener('drop', (event) => {
   post({ type: 'moveItem', id: dragId, parentId: dropTarget.parentId, index: dropTarget.index });
   finishDrag();
 });
+
+// ---------- 滑過提示 ----------
+
+/**
+ * 列表的完整標題與結論用自製提示框，不用原生 title：原生提示要停約一秒才跳出來，
+ * 列表每次存檔都整批重畫，停留中途被換掉就不會出現。提示框 fixed 定位，不被列表的捲動範圍裁掉。
+ */
+let tipTimer: ReturnType<typeof setTimeout> | undefined;
+let tipTarget: HTMLElement | null = null;
+
+function showTip(target: HTMLElement): void {
+  const text = target.dataset.tip;
+  if (!text || !target.isConnected) {
+    return;
+  }
+  els.tooltip.textContent = text;
+  els.tooltip.hidden = false;
+  const rect = target.getBoundingClientRect();
+  const tip = els.tooltip.getBoundingClientRect();
+  const below = rect.bottom + 4;
+  const top = below + tip.height <= window.innerHeight - 4 ? below : Math.max(4, rect.top - tip.height - 4);
+  els.tooltip.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - tip.width - 4))}px`;
+  els.tooltip.style.top = `${top}px`;
+}
+
+function hideTip(): void {
+  clearTimeout(tipTimer);
+  tipTimer = undefined;
+  tipTarget = null;
+  els.tooltip.hidden = true;
+}
+
+els.items.addEventListener('mouseover', (event) => {
+  const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tip]') : null;
+  if (target === tipTarget) {
+    return;
+  }
+  hideTip();
+  if (!target?.dataset.tip || dragId) {
+    return;
+  }
+  tipTarget = target;
+  tipTimer = setTimeout(() => showTip(target), 300);
+});
+els.items.addEventListener('mouseleave', hideTip);
+els.items.addEventListener('scroll', hideTip);
 
 // ---------- 左右比例 ----------
 

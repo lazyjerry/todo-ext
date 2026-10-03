@@ -524,6 +524,7 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     </section>
   </main>
   <div id="tags-menu" class="multiselect-menu" role="listbox" aria-label="標籤" hidden></div>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

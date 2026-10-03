@@ -630,3 +630,22 @@ select.color {
   min-width: 36px;
   text-align: center;
 }
+
+/* ---------- 滑過提示 ---------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 200;
+  max-width: min(360px, calc(100vw - 8px));
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--border));
+  border-radius: 3px;
+  background: var(--vscode-editorHoverWidget-background, var(--dropdown-bg));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
