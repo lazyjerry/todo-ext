@@ -1,7 +1,7 @@
 import type { FilterKey } from '../core/filter';
 import { FILTERS, filterItems, isFilterKey } from '../core/filter';
 import type { Collection, ItemPatch, Tag, TagColor, TodoItem } from '../core/model';
-import { STATUSES, TAG_COLORS, TITLE_MAX } from '../core/model';
+import { CLOSED_STATUSES, CONCLUSION_MAX, STATUSES, TAG_COLORS, TITLE_MAX } from '../core/model';
 import type { ViewState } from '../core/uiState';
 import type { ClientMessage, HostMessage } from '../shared/protocol';
 import { clampRatio } from '../shared/protocol';
@@ -38,6 +38,9 @@ const els = {
   itemTitle: $<HTMLInputElement>('item-title'),
   titleCount: $<HTMLElement>('title-count'),
   itemStatus: $<HTMLSelectElement>('item-status'),
+  conclusionField: $<HTMLElement>('conclusion-field'),
+  itemConclusion: $<HTMLInputElement>('item-conclusion'),
+  conclusionCount: $<HTMLElement>('conclusion-count'),
   itemCategory: $<HTMLSelectElement>('item-category'),
   manageCategories: $<HTMLButtonElement>('manage-categories'),
   manageTags: $<HTMLButtonElement>('manage-tags'),
@@ -238,14 +241,21 @@ function renderList(collection: Collection): void {
   const parents = new Set(items.map((item) => item.parentId).filter((parentId): parentId is string => parentId !== null));
   els.items.replaceChildren(
     ...visible.map(({ item, context }) => {
+      // 標題截斷時滑過看完整標題；結論只在結束類狀態且有填時出現，滑過看內容；分類跟標籤同樣式。
       const line = el(
         'div',
         { className: 'line' },
         statusPill(item.status),
-        el('span', { className: 'item-title', textContent: item.title || '（無標題）' }),
-        el('span', { className: 'category', textContent: categoryName.get(item.categoryId) ?? '' }),
-        el('span', { className: 'muted date', textContent: formatDateTime(item.createdAt) }),
+        el('span', { className: 'item-title', textContent: item.title || '（無標題）', title: item.title }),
       );
+      if (CLOSED_STATUSES.has(item.status) && item.conclusion) {
+        line.append(el('span', { className: 'tag c-blue conclusion', textContent: '結論', title: item.conclusion }));
+      }
+      const category = categoryName.get(item.categoryId);
+      if (category) {
+        line.append(el('span', { className: 'tag c-gray', textContent: category }));
+      }
+      line.append(el('span', { className: 'muted date', textContent: formatDateTime(item.createdAt) }));
       const classes = ['item', item.parentId === null ? 'depth-0' : 'depth-1'];
       if (item.id === selectedItemId) {
         classes.push('selected');
@@ -323,6 +333,12 @@ function renderDetail(collection: Collection): void {
   els.itemStatus.replaceChildren(...STATUSES.map((status) => el('option', { value: status, textContent: status, selected: status === item.status })));
   els.itemStatus.className = STATUS_LABEL[item.status] ?? '';
 
+  els.conclusionField.hidden = !CLOSED_STATUSES.has(item.status);
+  if (!isFocused(els.itemConclusion)) {
+    els.itemConclusion.value = item.conclusion;
+  }
+  updateConclusionCount();
+
   els.itemCategory.replaceChildren(
     ...collection.categories.map((category) => el('option', { value: category.id, textContent: category.name, selected: category.id === item.categoryId })),
   );
@@ -342,6 +358,10 @@ function renderDetail(collection: Collection): void {
 
 function updateTitleCount(): void {
   els.titleCount.textContent = `${els.itemTitle.value.length} / ${TITLE_MAX}`;
+}
+
+function updateConclusionCount(): void {
+  els.conclusionCount.textContent = `${els.itemConclusion.value.length} / ${CONCLUSION_MAX}`;
 }
 
 // ---------- 標籤多選下拉 ----------
@@ -831,6 +851,30 @@ els.itemTitle.addEventListener('blur', () => {
   }
 });
 els.itemTitle.addEventListener('keydown', (event) => {
+  if (isSubmitEnter(event)) {
+    event.preventDefault();
+    els.itemContent.focus();
+  }
+});
+
+els.itemConclusion.addEventListener('input', () => {
+  updateConclusionCount();
+  const id = selectedItemId;
+  const conclusion = els.itemConclusion.value;
+  debounce(`conclusion:${id}`, () => {
+    if (id) {
+      post({ type: 'updateItem', id, patch: { conclusion } });
+    }
+  });
+});
+els.itemConclusion.addEventListener('blur', () => {
+  flush(`conclusion:${selectedItemId}`);
+  const item = currentItem();
+  if (item && els.itemConclusion.value.trim() !== item.conclusion) {
+    patchCurrent({ conclusion: els.itemConclusion.value });
+  }
+});
+els.itemConclusion.addEventListener('keydown', (event) => {
   if (isSubmitEnter(event)) {
     event.preventDefault();
     els.itemContent.focus();

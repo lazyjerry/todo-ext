@@ -6,7 +6,7 @@ import { STATUSES } from '../../src/core/model';
 
 function item(id: string, status: Status, title = '', content = '', parentId: string | null = null): TodoItem {
   const iso = '2026-09-27T00:00:00.000Z';
-  return { id, title, content, status, categoryId: 'cat', tagIds: [], parentId, createdAt: iso, completedAt: null, updatedAt: iso };
+  return { id, title, content, conclusion: '', status, categoryId: 'cat', tagIds: [], parentId, createdAt: iso, completedAt: null, updatedAt: iso };
 }
 
 const ids = (list: ReturnType<typeof filterItems>) => list.map((entry) => entry.item.id);

@@ -6,6 +6,7 @@ import {
   addTag,
   applyItemPatch,
   canonicalOrder,
+  CONCLUSION_MAX,
   createCollection,
   createItem,
   DEFAULT_CATEGORY_NAME,
@@ -66,6 +67,17 @@ suite('createItem 與 applyItemPatch', () => {
     const patched = applyItemPatch(collection, item, { title: `  x\ny${long}` }, T1);
     assert.equal(patched.title.length, TITLE_MAX);
     assert.equal(patched.title.startsWith('x y'), true);
+  });
+
+  test('結論截到 512 字並去掉換行；切回未結束的狀態仍保留', () => {
+    const { collection, item } = fixture();
+    assert.equal(item.conclusion, '');
+    const long = 'a'.repeat(600);
+    const closed = applyItemPatch(collection, item, { status: '擱置', conclusion: `  x\ny${long}` }, T1);
+    assert.equal(closed.conclusion.length, CONCLUSION_MAX);
+    assert.equal(closed.conclusion.startsWith('x y'), true);
+    const reopened = applyItemPatch(collection, closed, { status: '未完成' }, T2);
+    assert.equal(reopened.conclusion, closed.conclusion);
   });
 
   test('切成已完成或失敗記下完成時間；切回其他狀態清掉；兩者互切保留', () => {
@@ -308,5 +320,24 @@ suite('parseCollection', () => {
       nextId,
     )!;
     assert.equal(parsed.items[0].completedAt, '2026-01-01T00:00:00.000Z');
+  });
+
+  test('結論：舊檔沒有這個欄位補空字串，型別不對也補空字串', () => {
+    const parsed = parseCollection(
+      {
+        id: 'col_0000000000000001',
+        name: 'x',
+        items: [
+          { id: 'todo_1', status: '已完成', conclusion: '做完了' },
+          { id: 'todo_2', status: '已完成' },
+          { id: 'todo_3', status: '失敗', conclusion: 7 },
+        ],
+      },
+      nextId,
+    )!;
+    assert.deepEqual(
+      parsed.items.map((item) => item.conclusion),
+      ['做完了', '', ''],
+    );
   });
 });

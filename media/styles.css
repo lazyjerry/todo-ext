@@ -293,14 +293,15 @@ body.expanded #splitter {
   text-overflow: ellipsis;
 }
 
-.item .category {
+.item .line .tag {
   flex: none;
-  color: var(--muted);
+  padding: 0 6px;
   font-size: 10px;
+  line-height: 1.4;
 }
 
-.item .category:not(:empty)::before {
-  content: '#';
+.item .conclusion {
+  cursor: help;
 }
 
 .item .date {
@@ -569,12 +570,14 @@ select.color {
   flex: 1;
 }
 
-#item-title {
+#item-title,
+#item-conclusion {
   font-size: 1.1em;
   font-weight: 600;
 }
 
-#title-count {
+#title-count,
+#conclusion-count {
   margin-left: 6px;
 }
 

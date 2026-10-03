@@ -54,7 +54,7 @@ function isItemPatch(value: unknown): value is ItemPatch {
     return false;
   }
   const patch = value as Record<string, unknown>;
-  const allowed = ['title', 'content', 'status', 'categoryId', 'tagIds', 'createdAt'];
+  const allowed = ['title', 'content', 'conclusion', 'status', 'categoryId', 'tagIds', 'createdAt'];
   for (const key of Object.keys(patch)) {
     if (!allowed.includes(key)) {
       return false;
@@ -63,6 +63,7 @@ function isItemPatch(value: unknown): value is ItemPatch {
   return (
     (patch.title === undefined || isStr(patch.title)) &&
     (patch.content === undefined || isStr(patch.content)) &&
+    (patch.conclusion === undefined || isStr(patch.conclusion)) &&
     (patch.status === undefined || isStatus(patch.status)) &&
     (patch.categoryId === undefined || isStr(patch.categoryId)) &&
     (patch.tagIds === undefined || (Array.isArray(patch.tagIds) && patch.tagIds.every(isStr))) &&

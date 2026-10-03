@@ -9,11 +9,15 @@ export type Status = (typeof STATUSES)[number];
 /** 切到這兩個狀態時記下完成時間。 */
 export const DONE_STATUSES: ReadonlySet<Status> = new Set<Status>(['已完成', '失敗']);
 
+/** 「結束」類狀態：細節區才顯示結論欄、列表才顯示結論標籤。跟狀態篩選的「結束」同一組。 */
+export const CLOSED_STATUSES: ReadonlySet<Status> = new Set<Status>(['已完成', '失敗', '擱置']);
+
 /** 自訂標籤的顏色，對齊 Notion 的九色。 */
 export const TAG_COLORS = ['gray', 'brown', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'red'] as const;
 export type TagColor = (typeof TAG_COLORS)[number];
 
 export const TITLE_MAX = 120;
+export const CONCLUSION_MAX = 512;
 export const NAME_MAX = 60;
 export const DEFAULT_CATEGORY_NAME = '未分類';
 export const DEFAULT_COLLECTION_NAME = '預設';
@@ -35,6 +39,8 @@ export interface TodoItem {
   /** 120 字內；允許空字串，畫面顯示成「（無標題）」。 */
   title: string;
   content: string;
+  /** 512 字內單行；狀態是結束類時才在畫面上出現，切回其他狀態時保留不清掉。 */
+  conclusion: string;
   status: Status;
   categoryId: string;
   tagIds: string[];
@@ -60,7 +66,7 @@ export interface Collection {
   updatedAt: string;
 }
 
-export type ItemPatch = Partial<Pick<TodoItem, 'title' | 'content' | 'status' | 'categoryId' | 'tagIds' | 'createdAt'>>;
+export type ItemPatch = Partial<Pick<TodoItem, 'title' | 'content' | 'conclusion' | 'status' | 'categoryId' | 'tagIds' | 'createdAt'>>;
 
 export function isStatus(value: unknown): value is Status {
   return typeof value === 'string' && (STATUSES as readonly string[]).includes(value);
@@ -129,6 +135,7 @@ export function createItem(id: string, collection: Collection, now: Date, parent
     id,
     title: '',
     content: '',
+    conclusion: '',
     status: '未完成',
     categoryId: defaultCategoryId(collection),
     tagIds: [],
@@ -147,6 +154,9 @@ export function applyItemPatch(collection: Collection, item: TodoItem, patch: It
   }
   if (typeof patch.content === 'string') {
     next.content = patch.content;
+  }
+  if (typeof patch.conclusion === 'string') {
+    next.conclusion = patch.conclusion.replace(/[\r\n]+/g, ' ').trim().slice(0, CONCLUSION_MAX);
   }
   if (patch.categoryId !== undefined && collection.categories.some((category) => category.id === patch.categoryId)) {
     next.categoryId = patch.categoryId;
@@ -389,6 +399,7 @@ export function parseCollection(raw: unknown, fallbackId: (prefix: string) => st
       id: item.id,
       title: '',
       content: '',
+      conclusion: '',
       status: '未完成',
       categoryId: defaultCategoryId(base),
       tagIds: [],
@@ -403,6 +414,7 @@ export function parseCollection(raw: unknown, fallbackId: (prefix: string) => st
       {
         title: str(item.title),
         content: str(item.content),
+        conclusion: str(item.conclusion),
         status: isStatus(item.status) ? item.status : '未完成',
         categoryId: str(item.categoryId),
         tagIds: Array.isArray(item.tagIds) ? item.tagIds.filter((tagId): tagId is string => typeof tagId === 'string') : [],

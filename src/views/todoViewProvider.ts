@@ -494,6 +494,10 @@ export class TodoViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             <select id="item-category"></select>
           </label>
         </div>
+        <label class="field" id="conclusion-field" hidden>
+          <span class="label">結論 <span id="conclusion-count" class="muted"></span></span>
+          <input id="item-conclusion" type="text" maxlength="512" placeholder="結論（512 字內）">
+        </label>
         <div class="field" id="tags-field" hidden>
           <span class="label">標籤 <button type="button" id="manage-tags" class="link">管理</button></span>
           <button type="button" id="tags-toggle" class="multiselect-toggle" aria-haspopup="listbox" aria-expanded="false" title="選擇標籤（可多選）">
